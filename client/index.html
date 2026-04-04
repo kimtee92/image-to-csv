@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image → CSV</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Drag-over highlight */
+    .drop-active { border-color: #6366f1 !important; background: #eef2ff !important; }
+
+    /* Editable cell styling */
+    td[contenteditable="true"]:focus {
+      outline: 2px solid #6366f1;
+      outline-offset: -2px;
+      background: #f5f3ff;
+    }
+    th[contenteditable="true"]:focus {
+      outline: 2px solid #6366f1;
+      outline-offset: -2px;
+      background: #ede9fe;
+    }
+
+    /* Row hover */
+    #data-table tbody tr:hover { background: #f9fafb; }
+
+    /* Spinner */
+    .spinner {
+      border: 4px solid #e5e7eb;
+      border-top: 4px solid #6366f1;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Smooth transitions */
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Image viewer: zoom + pan */
+    #image-viewer {
+      position: relative;
+      overflow: hidden;
+      cursor: grab;
+      background: #f1f5f9;
+      min-height: 400px;
+      max-height: 80vh;
+    }
+    #image-viewer.grabbing { cursor: grabbing; }
+    #image-viewer img {
+      transform-origin: 0 0;
+      will-change: transform;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    /* Zoom controls */
+    .zoom-controls {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      display: flex;
+      gap: 4px;
+      z-index: 10;
+    }
+    .zoom-controls button {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      background: white;
+      color: #374151;
+      font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .zoom-controls button:hover { background: #f3f4f6; }
+    /* Active field highlight pulse */
+    .field-active {
+      outline: 2px solid #6366f1 !important;
+      outline-offset: -1px;
+      background: #eef2ff !important;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-white shadow-sm border-b border-gray-200">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold text-gray-900">Image → CSV</h1>
+          <p class="text-xs text-gray-500">Powered by GLM-OCR</p>
+        </div>
+      </div>
+      <div id="status-badge" class="text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-500">Checking model…</div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8">
+
+    <!-- Upload Area -->
+    <section id="upload-section">
+      <div id="drop-zone"
+           class="border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center cursor-pointer
+                  hover:border-indigo-400 hover:bg-indigo-50/30 transition-all duration-200">
+        <input type="file" id="file-input" accept="image/*" class="hidden" />
+        <div class="flex flex-col items-center gap-4">
+          <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center">
+            <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <div>
+            <p class="text-lg font-semibold text-gray-700">Drop your timesheet image here</p>
+            <p class="text-sm text-gray-500 mt-1">or click to browse — PNG, JPG, WEBP up to 20 MB</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Image preview after selection (before processing) -->
+      <div id="selected-preview" class="hidden mt-4 bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4">
+        <img id="selected-image-thumb" class="w-20 h-20 object-contain rounded-lg border border-gray-100" />
+        <div class="flex-1">
+          <p id="selected-file-name" class="text-sm font-medium text-gray-800"></p>
+          <p class="text-xs text-gray-400">Image selected — fill in options below then click Extract</p>
+        </div>
+        <button onclick="clearSelectedFile()" class="text-gray-400 hover:text-red-500 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Additional options -->
+      <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Prompt field -->
+        <div>
+          <label for="prompt-input" class="block text-sm font-medium text-gray-700 mb-1">Additional Instructions (optional)</label>
+          <textarea id="prompt-input" rows="3"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800
+                           placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="e.g. &quot;Include the employee name and period from the header&quot; or &quot;Use 24-hour time format&quot;"></textarea>
+        </div>
+        <!-- CSV template upload -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">CSV Template (optional)</label>
+          <div class="flex items-center gap-2">
+            <label class="flex-1 flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 rounded-lg
+                          cursor-pointer hover:bg-gray-50 transition text-sm text-gray-600">
+              <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+              <span id="csv-file-label">Choose CSV file for column baseline…</span>
+              <input type="file" id="csv-input" accept=".csv,text/csv" class="hidden" />
+            </label>
+            <button id="csv-clear-btn" onclick="clearCsvTemplate()" title="Remove CSV template"
+                    class="hidden p-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-300 transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">Upload a CSV whose headers define the output columns. Without a template, only the raw table is shown.</p>
+        </div>
+      </div>
+
+      <!-- Extract button -->
+      <div class="mt-6 flex justify-center">
+        <button id="extract-btn" onclick="startExtraction()" disabled
+                class="px-8 py-3 bg-indigo-600 text-white rounded-xl text-sm font-semibold
+                       hover:bg-indigo-700 transition flex items-center gap-2
+                       disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-indigo-600">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          Extract Table
+        </button>
+      </div>
+    </section>
+
+    <!-- Loading State -->
+    <section id="loading-section" class="hidden">
+      <div class="flex flex-col items-center gap-4 py-16">
+        <div class="spinner"></div>
+        <p class="text-gray-600 font-medium">Extracting table from image…</p>
+        <p class="text-sm text-gray-400">This may take a few seconds</p>
+      </div>
+    </section>
+
+    <!-- Error State -->
+    <section id="error-section" class="hidden fade-in">
+      <div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
+        <p class="text-red-700 font-medium" id="error-message"></p>
+        <button onclick="resetApp()" class="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition text-sm">
+          Try Again
+        </button>
+      </div>
+    </section>
+
+    <!-- Results Area -->
+    <section id="results-section" class="hidden fade-in">
+
+      <!-- Image Preview + Controls -->
+      <div class="flex flex-col lg:flex-row gap-6 mb-6">
+        <!-- Image viewer: zoomable + pannable -->
+        <div class="lg:w-1/2 lg:sticky lg:top-4 lg:self-start">
+          <div class="bg-white rounded-xl border border-gray-200 p-2">
+            <div id="image-viewer" class="rounded-lg">
+              <img id="image-preview" draggable="false" />
+              <div class="zoom-controls">
+                <button onclick="imgViewerZoom(1.25)" title="Zoom in">+</button>
+                <button onclick="imgViewerZoom(0.8)" title="Zoom out">−</button>
+                <button onclick="imgViewerReset()" title="Fit to view">⊡</button>
+              </div>
+            </div>
+            <p id="image-name" class="text-xs text-gray-400 mt-1 text-center truncate"></p>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="lg:w-1/2 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <h2 class="text-lg font-bold text-gray-800">Extracted Table</h2>
+              <span id="llm-badge" class="hidden text-xs px-2 py-0.5 rounded-full font-medium"></span>
+            </div>
+            <p class="text-sm text-gray-500 mb-4">Click any cell to edit. Use the buttons to add/remove rows and columns.</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="addRow()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              Add Row
+            </button>
+            <button onclick="removeLastRow()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+              Remove Row
+            </button>
+            <button onclick="addColumn()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              Add Column
+            </button>
+            <button onclick="removeLastColumn()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+              Remove Column
+            </button>
+            <div class="flex-1"></div>
+            <button onclick="downloadCSV()" class="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              Download CSV
+            </button>
+            <button onclick="resetApp()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition">
+              New Image
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Non-table text ABOVE -->
+      <div id="text-above-section" class="mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-gray-600 flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+            Header Fields
+          </h3>
+          <button onclick="addField('above')" class="text-xs px-2 py-1 rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition flex items-center gap-1">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Add Field
+          </button>
+        </div>
+        <div id="text-above-fields" class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <p class="text-xs text-gray-400 col-span-2 py-1">No header fields detected. Click "Add Field" to add one.</p>
+        </div>
+      </div>
+
+      <!-- Editable Table -->
+      <!-- Consolidate toolbar -->
+      <div class="flex items-center gap-2 mb-2 flex-wrap">
+        <span class="text-xs text-gray-400">Consolidate repeating cells:</span>
+        <span class="flex items-center gap-1">
+          <label class="text-xs text-gray-400" for="consolidate-col">Col</label>
+          <input id="consolidate-col" type="number" min="1" value="1"
+            class="w-12 text-xs border border-gray-200 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            title="Column number to consolidate vertically (1-indexed)" />
+          <button onclick="consolidate('vertical')" class="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition flex items-center gap-1" title="Clear repeating values going down in the selected column">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            Vertical
+          </button>
+        </span>
+        <span class="flex items-center gap-1">
+          <label class="text-xs text-gray-400" for="consolidate-row">Row</label>
+          <input id="consolidate-row" type="number" min="1"
+            class="w-12 text-xs border border-gray-200 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            placeholder="last"
+            title="Row number to consolidate horizontally (1-indexed, blank = last row)" />
+          <button onclick="consolidate('horizontal')" class="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition flex items-center gap-1" title="Clear repeating values going right in the selected row">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+            Horizontal
+          </button>
+        </span>
+      </div>
+      <div class="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+        <table id="data-table" class="w-full text-sm">
+          <thead id="table-head" class="bg-gray-50 border-b border-gray-200"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Non-table text BELOW -->
+      <div id="text-below-section" class="mt-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-gray-600 flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            Footer Fields
+          </h3>
+          <button onclick="addField('below')" class="text-xs px-2 py-1 rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition flex items-center gap-1">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Add Field
+          </button>
+        </div>
+        <div id="text-below-fields" class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <p class="text-xs text-gray-400 col-span-2 py-1">No footer fields detected. Click "Add Field" to add one.</p>
+        </div>
+      </div>
+
+      <!-- Raw output toggle -->
+      <details class="mt-4">
+        <summary class="cursor-pointer text-sm text-gray-400 hover:text-gray-600">Show raw OCR output</summary>
+        <pre id="raw-output" class="mt-2 bg-gray-100 rounded-lg p-4 text-xs text-gray-600 overflow-x-auto whitespace-pre-wrap"></pre>
+      </details>
+      <details id="llm-debug-section" class="mt-2 hidden">
+        <summary class="cursor-pointer text-sm text-gray-400 hover:text-gray-600">Show LLM raw output</summary>
+        <pre id="llm-raw-output" class="mt-2 bg-gray-100 rounded-lg p-4 text-xs text-gray-600 overflow-x-auto whitespace-pre-wrap"></pre>
+      </details>
+    </section>
+  </main>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────────────
+    let currentHeaders = [];
+    let currentRows = [];
+    let headerFields = [];  // [{label, value}, ...]
+    let footerFields = [];
+    let selectedFile = null;
+    let ocrRawText = '';     // raw OCR text for field search
+
+    // ── Image viewer state ────────────────────────────────────────────────
+    let ivScale = 1, ivX = 0, ivY = 0;
+    let ivDragging = false, ivStartX = 0, ivStartY = 0, ivOrigX = 0, ivOrigY = 0;
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const dropZone         = document.getElementById('drop-zone');
+    const fileInput        = document.getElementById('file-input');
+    const csvInput         = document.getElementById('csv-input');
+    const csvFileLabel     = document.getElementById('csv-file-label');
+    const csvClearBtn      = document.getElementById('csv-clear-btn');
+    const promptInput      = document.getElementById('prompt-input');
+    const extractBtn       = document.getElementById('extract-btn');
+    const selectedPreview  = document.getElementById('selected-preview');
+    const selectedThumb    = document.getElementById('selected-image-thumb');
+    const selectedFileName = document.getElementById('selected-file-name');
+    const uploadSection    = document.getElementById('upload-section');
+    const loadingSection   = document.getElementById('loading-section');
+    const errorSection     = document.getElementById('error-section');
+    const resultsSection   = document.getElementById('results-section');
+    const errorMessage     = document.getElementById('error-message');
+    const imagePreview     = document.getElementById('image-preview');
+    const imageName        = document.getElementById('image-name');
+    const tableHead        = document.getElementById('table-head');
+    const tableBody        = document.getElementById('table-body');
+    const rawOutput        = document.getElementById('raw-output');
+    const llmBadge         = document.getElementById('llm-badge');
+    const llmDebugSection  = document.getElementById('llm-debug-section');
+    const llmRawOutput     = document.getElementById('llm-raw-output');
+    const statusBadge      = document.getElementById('status-badge');
+    const textAboveSection = document.getElementById('text-above-section');
+    const textAboveFields  = document.getElementById('text-above-fields');
+    const textBelowSection = document.getElementById('text-below-section');
+    const textBelowFields  = document.getElementById('text-below-fields');
+    const imageViewer      = document.getElementById('image-viewer');
+
+    // ── Image viewer: zoom & pan ──────────────────────────────────────────
+    function ivApply() {
+      imagePreview.style.transform = `translate(${ivX}px, ${ivY}px) scale(${ivScale})`;
+    }
+    function imgViewerZoom(factor, cx, cy) {
+      const rect = imageViewer.getBoundingClientRect();
+      if (cx === undefined) { cx = rect.width / 2; cy = rect.height / 2; }
+      const newScale = Math.min(Math.max(ivScale * factor, 0.2), 20);
+      const ratio = newScale / ivScale;
+      ivX = cx - ratio * (cx - ivX);
+      ivY = cy - ratio * (cy - ivY);
+      ivScale = newScale;
+      ivApply();
+    }
+    function imgViewerReset() {
+      const rect = imageViewer.getBoundingClientRect();
+      const iw = imagePreview.naturalWidth, ih = imagePreview.naturalHeight;
+      if (!iw) return;
+      const scale = Math.min(rect.width / iw, rect.height / ih, 1);
+      ivScale = scale;
+      ivX = (rect.width - iw * scale) / 2;
+      ivY = (rect.height - ih * scale) / 2;
+      ivApply();
+    }
+    imageViewer.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = imageViewer.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      imgViewerZoom(e.deltaY < 0 ? 1.15 : 0.87, cx, cy);
+    }, { passive: false });
+    imageViewer.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      ivDragging = true; ivStartX = e.clientX; ivStartY = e.clientY;
+      ivOrigX = ivX; ivOrigY = ivY;
+      imageViewer.classList.add('grabbing');
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!ivDragging) return;
+      ivX = ivOrigX + (e.clientX - ivStartX);
+      ivY = ivOrigY + (e.clientY - ivStartY);
+      ivApply();
+    });
+    window.addEventListener('mouseup', () => {
+      ivDragging = false;
+      imageViewer.classList.remove('grabbing');
+    });
+    // Touch support
+    let ivTouchDist = 0;
+    imageViewer.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        ivDragging = true; ivStartX = e.touches[0].clientX; ivStartY = e.touches[0].clientY;
+        ivOrigX = ivX; ivOrigY = ivY;
+      } else if (e.touches.length === 2) {
+        ivDragging = false;
+        ivTouchDist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+      }
+    }, { passive: true });
+    imageViewer.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (e.touches.length === 1 && ivDragging) {
+        ivX = ivOrigX + (e.touches[0].clientX - ivStartX);
+        ivY = ivOrigY + (e.touches[0].clientY - ivStartY);
+        ivApply();
+      } else if (e.touches.length === 2) {
+        const d = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+        const rect = imageViewer.getBoundingClientRect();
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        imgViewerZoom(d / ivTouchDist, cx, cy);
+        ivTouchDist = d;
+      }
+    }, { passive: false });
+    imageViewer.addEventListener('touchend', () => { ivDragging = false; });
+    imagePreview.addEventListener('load', () => imgViewerReset());
+
+    // ── CSV file label ────────────────────────────────────────────────────
+    csvInput.addEventListener('change', () => {
+      if (csvInput.files[0]) {
+        csvFileLabel.textContent = csvInput.files[0].name;
+        csvClearBtn.classList.remove('hidden');
+      } else {
+        csvFileLabel.textContent = 'Choose CSV file for column baseline…';
+        csvClearBtn.classList.add('hidden');
+      }
+    });
+
+    function clearCsvTemplate() {
+      csvInput.value = '';
+      csvFileLabel.textContent = 'Choose CSV file for column baseline…';
+      csvClearBtn.classList.add('hidden');
+    }
+
+    // ── Health check ──────────────────────────────────────────────────────
+    async function checkHealth() {
+      try {
+        const r = await fetch('/api/health');
+        const d = await r.json();
+        if (d.model_ready) {
+          statusBadge.textContent = 'Model ready';
+          statusBadge.className = 'text-xs px-3 py-1 rounded-full bg-green-100 text-green-700';
+        } else {
+          statusBadge.textContent = 'Model loading…';
+          statusBadge.className = 'text-xs px-3 py-1 rounded-full bg-yellow-100 text-yellow-700';
+          setTimeout(checkHealth, 10000);
+        }
+      } catch {
+        statusBadge.textContent = 'Backend offline';
+        statusBadge.className = 'text-xs px-3 py-1 rounded-full bg-red-100 text-red-700';
+        setTimeout(checkHealth, 5000);
+      }
+    }
+    checkHealth();
+
+    // ── File handling (staged: select → configure → extract) ────────────
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => { if (e.target.files[0]) selectFile(e.target.files[0]); });
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drop-active'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drop-active'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drop-active');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith('image/')) selectFile(file);
+    });
+
+    // Also support paste
+    document.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          selectFile(item.getAsFile());
+          return;
+        }
+      }
+    });
+
+    function selectFile(file) {
+      selectedFile = file;
+      // Show thumbnail preview
+      const reader = new FileReader();
+      reader.onload = (e) => { selectedThumb.src = e.target.result; };
+      reader.readAsDataURL(file);
+      selectedFileName.textContent = file.name;
+      selectedPreview.classList.remove('hidden');
+      extractBtn.disabled = false;
+    }
+
+    function clearSelectedFile() {
+      selectedFile = null;
+      fileInput.value = '';
+      selectedPreview.classList.add('hidden');
+      extractBtn.disabled = true;
+    }
+
+    async function startExtraction() {
+      if (!selectedFile) return;
+      const file = selectedFile;
+
+      showSection('loading');
+
+      // Preview image in results area
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        imagePreview.src = e.target.result;
+        imageName.textContent = file.name;
+      };
+      reader.readAsDataURL(file);
+
+      // Upload with prompt + csv template
+      const form = new FormData();
+      form.append('file', file);
+      form.append('prompt', promptInput.value || '');
+      if (csvInput.files[0]) {
+        form.append('csv_template', csvInput.files[0]);
+      }
+
+      try {
+        const resp = await fetch('/api/ocr', { method: 'POST', body: form });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(err.detail || 'OCR failed');
+        }
+        const data = await resp.json();
+
+        currentHeaders = data.headers || [];
+        currentRows = data.rows || [];
+        ocrRawText = data.raw || '';
+        rawOutput.textContent = ocrRawText;
+
+        // LLM applied badge
+        if (data.llm_applied) {
+          llmBadge.textContent = '✓ LLM processed';
+          llmBadge.className = 'text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-700';
+        } else {
+          llmBadge.textContent = 'OCR only';
+          llmBadge.className = 'text-xs px-2 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500';
+        }
+        llmBadge.classList.remove('hidden');
+
+        // LLM debug output
+        if (data.llm_raw) {
+          llmRawOutput.textContent = data.llm_raw;
+          llmDebugSection.classList.remove('hidden');
+        } else {
+          llmDebugSection.classList.add('hidden');
+        }
+
+        const ocrTextLines = data.ocr_text_lines || [];    // lines before the table
+        const ocrFooterLines = data.ocr_footer_lines || []; // lines after the table
+
+        // With a template: LLM already filled the values; pass full OCR for fuzzy fallback
+        // Without a template: render header lines as header fields, footer lines as footer fields
+        const hasHeaderTemplate = (data.template_header_fields || []).length > 0;
+        const hasFooterTemplate = (data.template_footer_fields || []).length > 0;
+
+        headerFields = buildFields(
+          data.template_header_fields || [],
+          hasHeaderTemplate ? ocrTextLines.concat(ocrFooterLines) : ocrTextLines
+        );
+        footerFields = buildFields(
+          data.template_footer_fields || [],
+          hasFooterTemplate ? ocrTextLines.concat(ocrFooterLines) : ocrFooterLines
+        );
+
+        renderTable();
+        renderNonTableFields();
+        showSection('results');
+        clearCsvTemplate();
+      } catch (err) {
+        errorMessage.textContent = err.message;
+        showSection('error');
+      }
+    }
+
+    // ── Build fields from template + OCR data ──────────────────────────
+    function buildFields(templateFields, ocrLines) {
+      // Build a map from OCR text lines: normalize keys for fuzzy matching
+      const ocrMap = {};
+      ocrLines.forEach(line => {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx > 0 && colonIdx < 60) {
+          const key = line.substring(0, colonIdx).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          const val = line.substring(colonIdx + 1).trim();
+          if (val) ocrMap[key] = val;
+        }
+        // Also try matching without colon ("Name Dr. Vera" etc)
+        const spaceIdx = line.indexOf(' ');
+        if (spaceIdx > 0) {
+          const firstWord = line.substring(0, spaceIdx).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (firstWord.length >= 3 && !ocrMap[firstWord]) {
+            ocrMap[firstWord] = line.substring(spaceIdx + 1).trim();
+          }
+        }
+      });
+
+      if (templateFields.length) {
+        return templateFields.map(([label, defaultVal]) => {
+          const cleanLabel = label.replace(/:$/, '').trim();
+          const key = cleanLabel.toLowerCase().replace(/[^a-z0-9]/g, '');
+          // Try exact key first, then try partial matching
+          let ocrVal = ocrMap[key] || '';
+          if (!ocrVal) {
+            // Try matching on substrings of the key
+            for (const [k, v] of Object.entries(ocrMap)) {
+              if (k.includes(key) || key.includes(k)) {
+                ocrVal = v;
+                break;
+              }
+            }
+          }
+          return { label: cleanLabel, value: ocrVal || defaultVal };
+        });
+      }
+      // No template: build from OCR lines
+      return ocrLines.map((text, i) => {
+        const colonIdx = text.indexOf(':');
+        if (colonIdx > 0 && colonIdx < 50) {
+          return { label: text.substring(0, colonIdx).trim(), value: text.substring(colonIdx + 1).trim() };
+        }
+        return { label: 'Line ' + (i + 1), value: text };
+      });
+    }
+
+    // ── Non-table fields rendering ──────────────────────────────────────
+    function renderNonTableFields() {
+      renderFieldGroup(headerFields, textAboveFields, textAboveSection, 'above');
+      renderFieldGroup(footerFields, textBelowFields, textBelowSection, 'below');
+    }
+
+    function renderFieldGroup(fields, container, section, prefix) {
+      if (fields.length === 0) {
+        container.innerHTML = `<p class="text-xs text-gray-400 col-span-2 py-1">No ${prefix === 'above' ? 'header' : 'footer'} fields detected. Click "Add Field" to add one.</p>`;
+        return;
+      }
+      container.innerHTML = fields.map((f, i) =>
+        `<div class="flex items-center gap-1 bg-white rounded-lg border border-gray-200 px-2 py-1.5 group">
+          <input type="text" value="${escapeHtml(f.label)}" data-prefix="${prefix}" data-idx="${i}" data-field="label"
+                 class="w-32 shrink-0 text-xs font-semibold text-gray-500 bg-transparent border-none outline-none
+                        focus:ring-0 focus:bg-gray-100 rounded px-1 py-0.5" />
+          <span class="text-gray-300 text-xs">:</span>
+          <input type="text" value="${escapeHtml(f.value)}" data-prefix="${prefix}" data-idx="${i}" data-field="value"
+                 class="flex-1 text-sm text-gray-800 bg-transparent border-none outline-none
+                        focus:ring-0 focus:bg-indigo-50 rounded px-1 py-0.5" />
+          <button onclick="removeField('${prefix}', ${i})"
+                  class="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition ml-1 shrink-0" title="Remove field">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>`
+      ).join('');
+
+      container.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('blur', () => {
+          const idx = parseInt(inp.dataset.idx);
+          const arr = inp.dataset.prefix === 'above' ? headerFields : footerFields;
+          arr[idx][inp.dataset.field] = inp.value.trim();
+        });
+        inp.addEventListener('focus', () => {
+          scrollImageToField(inp.dataset.prefix === 'above' ? 'top' : 'bottom');
+        });
+      });
+    }
+
+    function addField(prefix) {
+      const arr = prefix === 'above' ? headerFields : footerFields;
+      arr.push({ label: 'Field ' + (arr.length + 1), value: '' });
+      renderNonTableFields();
+      // Focus the new label input
+      const container = prefix === 'above' ? textAboveFields : textBelowFields;
+      const inputs = container.querySelectorAll('input[data-field="label"]');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    }
+
+    function removeField(prefix, idx) {
+      const arr = prefix === 'above' ? headerFields : footerFields;
+      arr.splice(idx, 1);
+      renderNonTableFields();
+    }
+
+    // ── Table rendering ───────────────────────────────────────────────────
+    function renderTable() {
+      // Header — each TH has an editable span + hover insert/delete column controls
+      tableHead.innerHTML = '<tr><th class="w-8"></th>' +
+        currentHeaders.map((h, i) =>
+          `<th class="px-2 py-2 text-left font-semibold text-gray-700 border-r border-gray-100 last:border-r-0 group/col" data-col="${i}">
+            <div class="flex items-center gap-1">
+              <span contenteditable="true" data-col="${i}"
+                    class="flex-1 min-w-0 px-1 py-0.5 rounded focus:outline-none focus:bg-indigo-50">${escapeHtml(h)}</span>
+              <div class="opacity-0 group-hover/col:opacity-100 flex items-center shrink-0">
+                <button onclick="insertColumn(${i})" title="Insert column before"
+                        class="p-0.5 text-gray-300 hover:text-indigo-500 transition">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                </button>
+                <button onclick="removeColumn(${i})" title="Delete this column"
+                        class="p-0.5 text-gray-300 hover:text-red-500 transition">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+          </th>`
+        ).join('') + '</tr>';
+
+      // Body
+      tableBody.innerHTML = currentRows.map((row, ri) =>
+        '<tr class="border-b border-gray-100 group">' +
+        `<td class="px-1 py-1 w-8 text-center">
+          <button onclick="removeRow(${ri})" class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition" title="Delete row">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="9" stroke-width="2"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h8"/>
+            </svg>
+          </button>
+        </td>` +
+        row.map((cell, ci) =>
+          `<td class="px-1 py-1 text-gray-800 border-r border-gray-50 last:border-r-0 relative group/cell" data-row="${ri}" data-col="${ci}">
+            <div class="flex items-center gap-1">
+              <span contenteditable="true" class="flex-1 px-2 py-1 rounded focus:outline-none focus:bg-indigo-50" data-row="${ri}" data-col="${ci}">${escapeHtml(cell)}</span>
+              <button onclick="clearCell(${ri},${ci})" title="Clear cell"
+                      class="opacity-0 group-hover/cell:opacity-100 shrink-0 text-gray-300 hover:text-orange-400 transition">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </td>`
+        ).join('') + '</tr>'
+      ).join('');
+
+      // Sync edits back to state
+      tableHead.querySelectorAll('th span[contenteditable]').forEach(span => {
+        span.addEventListener('blur', () => {
+          currentHeaders[parseInt(span.dataset.col)] = span.textContent.trim();
+        });
+      });
+      tableBody.querySelectorAll('span[contenteditable]').forEach(span => {
+        span.addEventListener('blur', () => {
+          const r = parseInt(span.dataset.row);
+          const c = parseInt(span.dataset.col);
+          currentRows[r][c] = span.textContent.trim();
+        });
+        span.addEventListener('focus', () => {
+          const r = parseInt(span.dataset.row);
+          const c = parseInt(span.dataset.col);
+          scrollImageToCell(r, c, currentRows.length, currentHeaders.length);
+        });
+        span.addEventListener('keydown', (e) => {
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            const cells = [...tableBody.querySelectorAll('span[contenteditable]')];
+            const idx = cells.indexOf(span);
+            const next = e.shiftKey ? cells[idx - 1] : cells[idx + 1];
+            if (next) next.focus();
+          }
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            span.blur();
+          }
+        });
+      });
+    }
+
+    function clearCell(ri, ci) {
+      currentRows[ri][ci] = '';
+      renderTable();
+    }
+
+    // ── Consolidate repeated cells ────────────────────────────────────────
+    // vertical: within the selected column, clear a cell if it equals the cell above it
+    // horizontal: within the selected row, clear a cell if it equals the cell to its left
+    function consolidate(direction) {
+      document.activeElement?.blur();
+      if (direction === 'vertical') {
+        const colInput = document.getElementById('consolidate-col');
+        const colNum = parseInt(colInput?.value) || 1;
+        const c = Math.max(0, Math.min(colNum - 1, currentHeaders.length - 1));
+        let lastSeen = '';
+        for (let r = 0; r < currentRows.length; r++) {
+          const val = currentRows[r][c];
+          if (val !== '' && val === lastSeen) {
+            currentRows[r][c] = '';
+          } else {
+            lastSeen = val;
+          }
+        }
+      } else {
+        const rowInput = document.getElementById('consolidate-row');
+        const rowNum = rowInput?.value ? parseInt(rowInput.value) : currentRows.length;
+        const r = Math.max(0, Math.min(rowNum - 1, currentRows.length - 1));
+        let lastSeen = '';
+        for (let c = 0; c < (currentRows[r]?.length ?? 0); c++) {
+          const val = currentRows[r][c];
+          if (val !== '' && val === lastSeen) {
+            currentRows[r][c] = '';
+          } else {
+            lastSeen = val;
+          }
+        }
+      }
+      renderTable();
+    }
+
+    // ── Field → image position mapping ────────────────────────────────────
+    // scrollImageToCell: pan/zoom to a specific grid cell.
+    // table is estimated to occupy 20–85% vertically and 5–95% horizontally.
+    // First cell anchors to upper-right area; subsequent cells shift right/down.
+    function scrollImageToCell(rowIndex, colIndex, totalRows, totalCols) {
+      if (!imagePreview.naturalHeight || totalRows <= 0) return;
+      const ih = imagePreview.naturalHeight;
+      const iw = imagePreview.naturalWidth;
+      const rect = imageViewer.getBoundingClientRect();
+      const tableTop    = ih * 0.20;   // table starts ~20% from top (just below header)
+      const tableHeight = ih * 0.65;   // table spans ~65% of image height
+      const tableLeft   = iw * 0.05;   // table left edge ~5% from image left
+      const tableWidth  = iw * 0.90;   // table width ~90% of image width
+      const rFrac = totalRows  > 1 ? rowIndex  / (totalRows  - 1) : 0;
+      const cFrac = totalCols  > 1 ? colIndex  / (totalCols  - 1) : 0;
+      const targetX = tableLeft + cFrac * tableWidth;
+      const targetY = tableTop  + rFrac * tableHeight;
+      const desiredScale = Math.max(2, ivScale);
+      ivScale = desiredScale;
+      // Bias towards upper-right: place target point at 65% from left, 35% from top of viewer
+      ivX = rect.width  * 0.65 - targetX * desiredScale;
+      ivY = rect.height * 0.35 - targetY * desiredScale;
+      ivApply();
+    }
+
+    function scrollImageToField(position) {
+      // position: 'top' → upper-right corner of image; 'bottom' → lower-right corner
+      if (!imagePreview.naturalHeight) return;
+      const ih = imagePreview.naturalHeight;
+      const iw = imagePreview.naturalWidth;
+      const rect = imageViewer.getBoundingClientRect();
+      const desiredScale = Math.max(2, ivScale);
+      ivScale = desiredScale;
+      // Target point is right-side center for both header and footer
+      const targetX = iw * 0.75;   // 75% across — right area
+      if (position === 'top') {
+        const targetY = ih * 0.08; // near top
+        ivX = rect.width  * 0.75 - targetX * desiredScale;
+        ivY = rect.height * 0.20 - targetY * desiredScale;
+      } else {
+        const targetY = ih * 0.92; // near bottom
+        ivX = rect.width  * 0.75 - targetX * desiredScale;
+        ivY = rect.height * 0.80 - targetY * desiredScale;
+      }
+      ivApply();
+    }
+
+    // ── Table manipulation ────────────────────────────────────────────────
+    function addRow() {
+      currentRows.push(new Array(currentHeaders.length).fill(''));
+      renderTable();
+      // Focus first cell of new row
+      const lastRow = tableBody.lastElementChild;
+      if (lastRow) lastRow.firstElementChild?.focus();
+    }
+
+    function removeLastRow() {
+      if (currentRows.length > 0) {
+        currentRows.pop();
+        renderTable();
+      }
+    }
+
+    function removeRow(index) {
+      if (index >= 0 && index < currentRows.length) {
+        currentRows.splice(index, 1);
+        renderTable();
+      }
+    }
+
+    function addColumn() {
+      currentHeaders.push('New Column');
+      currentRows.forEach(row => row.push(''));
+      renderTable();
+    }
+
+    function removeLastColumn() {
+      if (currentHeaders.length > 1) {
+        currentHeaders.pop();
+        currentRows.forEach(row => row.pop());
+        renderTable();
+      }
+    }
+
+    function insertColumn(beforeIndex) {
+      currentHeaders.splice(beforeIndex, 0, 'New Column');
+      currentRows.forEach(row => row.splice(beforeIndex, 0, ''));
+      renderTable();
+    }
+
+    function removeColumn(colIndex) {
+      if (currentHeaders.length <= 1) return;
+      currentHeaders.splice(colIndex, 1);
+      currentRows.forEach(row => row.splice(colIndex, 1));
+      renderTable();
+    }
+
+    // ── CSV Download ──────────────────────────────────────────────────────
+    function downloadCSV() {
+      // Sync any in-progress edits
+      document.activeElement?.blur();
+
+      const csvLines = [];
+
+      // Header fields above table
+      if (headerFields.length) {
+        headerFields.forEach(f => csvLines.push(escapeCSVRow([f.label + ':', f.value])));
+        csvLines.push('');  // blank separator line
+      }
+
+      // Table data
+      const rows = [currentHeaders, ...currentRows];
+      rows.forEach(row => csvLines.push(escapeCSVRow(row)));
+
+      // Footer fields below table
+      if (footerFields.length) {
+        csvLines.push('');  // blank separator line
+        footerFields.forEach(f => csvLines.push(escapeCSVRow([f.label + ':', f.value])));
+      }
+
+      const csvContent = csvLines.join('\n');
+      const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (imageName.textContent?.replace(/\.[^.]+$/, '') || 'table') + '.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function escapeCSVRow(row) {
+      return row.map(cell => {
+        const val = String(cell).replace(/"/g, '""');
+        return /[,"\n\r]/.test(val) ? `"${val}"` : val;
+      }).join(',');
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    function showSection(name) {
+      uploadSection.classList.toggle('hidden', name !== 'upload');
+      loadingSection.classList.toggle('hidden', name !== 'loading');
+      errorSection.classList.toggle('hidden', name !== 'error');
+      resultsSection.classList.toggle('hidden', name !== 'results');
+    }
+
+    function resetApp() {
+      selectedFile = null;
+      fileInput.value = '';
+      currentHeaders = [];
+      currentRows = [];
+      headerFields = [];
+      footerFields = [];
+      selectedPreview.classList.add('hidden');
+      extractBtn.disabled = true;
+      // Keep CSV template and prompt — user typically reuses same settings across images
+      showSection('upload');
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>

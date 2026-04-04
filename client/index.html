@@ -861,34 +861,31 @@
     }
 
     // Grid cell: zoom in and center on estimated cell position.
+    // Uses simple proportional mapping: the image IS the document, so we
+    // divide the full image (with a 5% margin) into a grid matching the
+    // table dimensions and centre on the appropriate cell.
     function scrollImageToCell(rowIndex, colIndex, totalRows, totalCols) {
       if (!imagePreview.naturalHeight || totalRows <= 0) return;
       const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
-      // Only zoom to 1.5× if the user is currently below that; never raise
-      // above the current scale so repeated clicks don't cause bigger jumps.
       const scale = ivScale < 1.2 ? 1.5 : ivScale;
-      // Table occupies roughly 15%–80% of image width and 15%–85% of height.
-      // Using (rowIndex + 0.5) / totalRows centres within each row cell rather
-      // than targeting the row's top edge, reducing the perceived step size.
+      const margin = 0.05;
       const rFrac = (rowIndex + 0.5) / totalRows;
       const cFrac = (colIndex + 0.5) / totalCols;
-      // Span halved from previous values (0.65→0.32, 0.70→0.35).
-      // Offset adjusted so the mapping stays centred on the image.
-      const px = iw * (0.31 + cFrac * 0.32);
-      const py = ih * (0.32 + rFrac * 0.35);
+      const px = iw * (margin + cFrac * (1 - 2 * margin));
+      const py = ih * (margin + rFrac * (1 - 2 * margin));
       _panTo(px, py, scale);
     }
 
-    // Header fields: center on upper portion of image.
-    // Footer fields: center on lower portion of image.
+    // Header fields: center on top 5% of image.
+    // Footer fields: center on bottom 5% of image.
     function scrollImageToField(position) {
       if (!imagePreview.naturalHeight) return;
       const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
       const scale = ivScale < 1.2 ? 1.5 : ivScale;
       if (position === 'top') {
-        _panTo(iw * 0.25, ih * 0.10, scale);
+        _panTo(iw * 0.3, ih * 0.05, scale);
       } else {
-        _panTo(iw * 0.25, ih * 0.82, scale);
+        _panTo(iw * 0.3, ih * 0.95, scale);
       }
     }
 

@@ -17,7 +17,7 @@ services:
       --model Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled
       --served-model-name qwen3.5-27b
       --max-model-len 32768
-      --gpu-memory-utilization 0.90
+      --gpu-memory-utilization 0.72
       --dtype bfloat16
       --host 0.0.0.0
       --port 8000

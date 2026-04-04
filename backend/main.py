@@ -485,7 +485,7 @@ async def ocr_image(
         logger.info("LLM prompt length: %d chars", len(llm_prompt))
 
         llm_payload = {
-            "model": "qwen3.5-4b",
+            "model": "qwen3.5-27b",
             "messages": [
                 {
                     "role": "system",

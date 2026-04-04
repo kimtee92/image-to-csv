@@ -17,7 +17,7 @@ services:
       --served-model-name glm-ocr
       --trust-remote-code
       --max-model-len 4096
-      --gpu-memory-utilization 0.23
+      --gpu-memory-utilization 0.18
       --dtype bfloat16
       --host 0.0.0.0
       --port 8000
@@ -84,17 +84,17 @@ services:
     volumes:
       - /workspace/hf_cache:/workspace/hf_cache
     command: >
-      --model Qwen/Qwen3.5-4B
-      --served-model-name qwen3.5-4b
-      --max-model-len 4096
-      --gpu-memory-utilization 0.40
+      --model Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled
+      --served-model-name qwen3.5-27b
+      --max-model-len 32768
+      --gpu-memory-utilization 0.78
       --dtype bfloat16
       --host 0.0.0.0
       --port 8000
       --enable-prefix-caching
-      --max-num-batched-tokens 4096
-      --max-num-seqs 8
-      --num-gpu-blocks-override 512
+      --enable-chunked-prefill
+      --max-num-batched-tokens 8192
+      --max-num-seqs 4
       --language-model-only
     deploy:
       resources:

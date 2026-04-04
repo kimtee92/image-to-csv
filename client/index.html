@@ -45,8 +45,9 @@
       overflow: hidden;
       cursor: grab;
       background: #f1f5f9;
-      min-height: 400px;
-      max-height: 80vh;
+      min-height: 240px;
+      height: 38vh;
+      max-height: 45vh;
     }
     #image-viewer.grabbing { cursor: grabbing; }
     #image-viewer img {
@@ -202,58 +203,36 @@
     <!-- Results Area -->
     <section id="results-section" class="hidden fade-in">
 
-      <!-- Image Preview + Controls -->
-      <div class="flex flex-col lg:flex-row gap-6 mb-6">
-        <!-- Image viewer: zoomable + pannable -->
-        <div class="lg:w-1/2 lg:sticky lg:top-4 lg:self-start">
-          <div class="bg-white rounded-xl border border-gray-200 p-2">
-            <div id="image-viewer" class="rounded-lg">
-              <img id="image-preview" draggable="false" />
-              <div class="zoom-controls">
-                <button onclick="imgViewerZoom(1.25)" title="Zoom in">+</button>
-                <button onclick="imgViewerZoom(0.8)" title="Zoom out">−</button>
-                <button onclick="imgViewerReset()" title="Fit to view">⊡</button>
-              </div>
+      <!-- Image Preview (sticky) -->
+      <div class="mb-6 sticky top-4 z-10">
+        <div class="bg-white rounded-xl border border-gray-200 p-2">
+          <div id="image-viewer" class="rounded-lg">
+            <img id="image-preview" draggable="false" />
+            <div class="zoom-controls">
+              <button onclick="imgViewerZoom(1.25)" title="Zoom in">+</button>
+              <button onclick="imgViewerZoom(0.8)" title="Zoom out">−</button>
+              <button onclick="imgViewerReset()" title="Fit to view">⊡</button>
             </div>
-            <p id="image-name" class="text-xs text-gray-400 mt-1 text-center truncate"></p>
           </div>
+          <p id="image-name" class="text-xs text-gray-400 mt-1 text-center truncate"></p>
         </div>
+      </div>
 
-        <!-- Controls -->
-        <div class="lg:w-1/2 flex flex-col justify-between">
-          <div>
-            <div class="flex items-center gap-2 mb-1">
-              <h2 class="text-lg font-bold text-gray-800">Extracted Table</h2>
-              <span id="llm-badge" class="hidden text-xs px-2 py-0.5 rounded-full font-medium"></span>
-            </div>
-            <p class="text-sm text-gray-500 mb-4">Click any cell to edit. Use the buttons to add/remove rows and columns.</p>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <button onclick="addRow()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-              Add Row
-            </button>
-            <button onclick="removeLastRow()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
-              Remove Row
-            </button>
-            <button onclick="addColumn()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-              Add Column
-            </button>
-            <button onclick="removeLastColumn()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
-              Remove Column
-            </button>
-            <div class="flex-1"></div>
-            <button onclick="downloadCSV()" class="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-              Download CSV
-            </button>
-            <button onclick="resetApp()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition">
-              New Image
-            </button>
-          </div>
+      <!-- Table Info + Controls (not sticky) -->
+      <div class="mb-6">
+        <div class="flex items-center gap-2 mb-1">
+          <h2 class="text-lg font-bold text-gray-800">Extracted Table</h2>
+          <span id="llm-badge" class="hidden text-xs px-2 py-0.5 rounded-full font-medium"></span>
+        </div>
+        <p class="text-sm text-gray-500 mb-3">Click any cell to edit. Use the buttons to add/remove rows and columns.</p>
+        <div class="flex flex-wrap gap-2">
+          <button onclick="downloadCSV()" class="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Download CSV
+          </button>
+          <button onclick="resetApp()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition">
+            New Image
+          </button>
         </div>
       </div>
 
@@ -299,6 +278,24 @@
             Horizontal
           </button>
         </span>
+      </div>
+      <div class="flex flex-wrap gap-2 mb-2">
+        <button onclick="addRow()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Add Row
+        </button>
+        <button onclick="removeLastRow()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+          Remove Row
+        </button>
+        <button onclick="addColumn()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Add Column
+        </button>
+        <button onclick="removeLastColumn()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+          Remove Column
+        </button>
       </div>
       <div class="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         <table id="data-table" class="w-full text-sm">
@@ -862,30 +859,31 @@
 
     // Grid cell: zoom in and center on estimated cell position.
     // Uses simple proportional mapping: the image IS the document, so we
-    // divide the full image (with a 5% margin) into a grid matching the
-    // table dimensions and centre on the appropriate cell.
+    // divide most of the image (with light margins) into a grid matching
+    // the table dimensions and bias toward the upper-left of each cell.
     function scrollImageToCell(rowIndex, colIndex, totalRows, totalCols) {
       if (!imagePreview.naturalHeight || totalRows <= 0) return;
       const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
-      const scale = ivScale < 1.2 ? 1.5 : ivScale;
-      const margin = 0.05;
-      const rFrac = (rowIndex + 0.5) / totalRows;
-      const cFrac = (colIndex + 0.5) / totalCols;
-      const px = iw * (margin + cFrac * (1 - 2 * margin));
-      const py = ih * (margin + rFrac * (1 - 2 * margin));
+      const scale = ivScale < 1.05 ? 1.15 : ivScale;
+      const marginX = 0.03;
+      const marginY = 0.04;
+      const rFrac = (rowIndex + 0.25) / totalRows;
+      const cFrac = (colIndex + 0.25) / totalCols;
+      const px = iw * (marginX + cFrac * (1 - 2 * marginX));
+      const py = ih * (marginY + rFrac * (1 - 2 * marginY));
       _panTo(px, py, scale);
     }
 
-    // Header fields: center on top 5% of image.
-    // Footer fields: center on bottom 5% of image.
+    // Header fields: center near top of image.
+    // Footer fields: center near bottom of image.
     function scrollImageToField(position) {
       if (!imagePreview.naturalHeight) return;
       const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
-      const scale = ivScale < 1.2 ? 1.5 : ivScale;
+      const scale = ivScale < 1.1 ? 1.25 : ivScale;
       if (position === 'top') {
-        _panTo(iw * 0.3, ih * 0.05, scale);
+        _panTo(iw * 0.1, ih * 0.06, scale);
       } else {
-        _panTo(iw * 0.3, ih * 0.95, scale);
+        _panTo(iw * 0.1, ih * 0.94, scale);
       }
     }
 

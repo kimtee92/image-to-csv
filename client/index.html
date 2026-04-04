@@ -872,8 +872,10 @@
       // than targeting the row's top edge, reducing the perceived step size.
       const rFrac = (rowIndex + 0.5) / totalRows;
       const cFrac = (colIndex + 0.5) / totalCols;
-      const px = iw * (0.15 + cFrac * 0.65);
-      const py = ih * (0.15 + rFrac * 0.70);
+      // Span halved from previous values (0.65→0.32, 0.70→0.35).
+      // Offset adjusted so the mapping stays centred on the image.
+      const px = iw * (0.31 + cFrac * 0.32);
+      const py = ih * (0.32 + rFrac * 0.35);
       _panTo(px, py, scale);
     }
 

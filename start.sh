@@ -13,8 +13,15 @@ error() { echo -e "${RED}[✗]${NC} $*"; }
 info "Starting Image-to-CSV (GLM-OCR)..."
 sudo docker compose up -d --build
 
+# ── Cloudflare Tunnel ─────────────────────────────────────────────────────────
+pkill cloudflared 2>/dev/null || true
+sleep 1
+cloudflared tunnel --config ~/.cloudflared/config.yml run > /tmp/cloudflared.log 2>&1 &
+info "Cloudflare tunnel started (csv.synopustech.com → localhost:9001)"
+
 echo ""
 info "Containers starting. vLLM model may take a few minutes to load."
-info "App will be available at: http://localhost:9001"
+info "App available locally:  http://localhost:9001"
+info "App available publicly: https://csv.synopustech.com"
 echo ""
 sudo docker compose ps

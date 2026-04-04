@@ -608,6 +608,8 @@
         renderTable();
         renderNonTableFields();
         showSection('results');
+        // Reset image viewer after section is visible (load event fires too early while hidden)
+        requestAnimationFrame(() => imgViewerReset());
         clearCsvTemplate();
       } catch (err) {
         errorMessage.textContent = err.message;
@@ -721,25 +723,11 @@
 
     // ── Table rendering ───────────────────────────────────────────────────
     function renderTable() {
-      // Header — each TH has an editable span + hover insert/delete column controls
+      // Header
       tableHead.innerHTML = '<tr><th class="w-8"></th>' +
         currentHeaders.map((h, i) =>
-          `<th class="px-2 py-2 text-left font-semibold text-gray-700 border-r border-gray-100 last:border-r-0 group/col" data-col="${i}">
-            <div class="flex items-center gap-1">
-              <span contenteditable="true" data-col="${i}"
-                    class="flex-1 min-w-0 px-1 py-0.5 rounded focus:outline-none focus:bg-indigo-50">${escapeHtml(h)}</span>
-              <div class="opacity-0 group-hover/col:opacity-100 flex items-center shrink-0">
-                <button onclick="insertColumn(${i})" title="Insert column before"
-                        class="p-0.5 text-gray-300 hover:text-indigo-500 transition">
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                </button>
-                <button onclick="removeColumn(${i})" title="Delete this column"
-                        class="p-0.5 text-gray-300 hover:text-red-500 transition">
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                </button>
-              </div>
-            </div>
-          </th>`
+          `<th contenteditable="true" class="px-4 py-3 text-left font-semibold text-gray-700 border-r border-gray-100 last:border-r-0"
+               data-col="${i}">${escapeHtml(h)}</th>`
         ).join('') + '</tr>';
 
       // Body
@@ -767,9 +755,9 @@
       ).join('');
 
       // Sync edits back to state
-      tableHead.querySelectorAll('th span[contenteditable]').forEach(span => {
-        span.addEventListener('blur', () => {
-          currentHeaders[parseInt(span.dataset.col)] = span.textContent.trim();
+      tableHead.querySelectorAll('th[contenteditable]').forEach(th => {
+        th.addEventListener('blur', () => {
+          currentHeaders[parseInt(th.dataset.col)] = th.textContent.trim();
         });
       });
       tableBody.querySelectorAll('span[contenteditable]').forEach(span => {
@@ -840,50 +828,58 @@
     }
 
     // ── Field → image position mapping ────────────────────────────────────
-    // scrollImageToCell: pan/zoom to a specific grid cell.
-    // table is estimated to occupy 20–85% vertically and 5–95% horizontally.
-    // First cell anchors to upper-right area; subsequent cells shift right/down.
-    function scrollImageToCell(rowIndex, colIndex, totalRows, totalCols) {
-      if (!imagePreview.naturalHeight || totalRows <= 0) return;
-      const ih = imagePreview.naturalHeight;
-      const iw = imagePreview.naturalWidth;
+    // Helper: pan so that image-pixel (px,py) is centered in the viewer.
+    // Optionally sets zoom scale. Clamps so image edges stay within bounds.
+    function _panTo(px, py, scale) {
       const rect = imageViewer.getBoundingClientRect();
-      const tableTop    = ih * 0.20;   // table starts ~20% from top (just below header)
-      const tableHeight = ih * 0.65;   // table spans ~65% of image height
-      const tableLeft   = iw * 0.05;   // table left edge ~5% from image left
-      const tableWidth  = iw * 0.90;   // table width ~90% of image width
-      const rFrac = totalRows  > 1 ? rowIndex  / (totalRows  - 1) : 0;
-      const cFrac = totalCols  > 1 ? colIndex  / (totalCols  - 1) : 0;
-      const targetX = tableLeft + cFrac * tableWidth;
-      const targetY = tableTop  + rFrac * tableHeight;
-      const desiredScale = Math.max(2, ivScale);
-      ivScale = desiredScale;
-      // Bias towards upper-right: place target point at 65% from left, 35% from top of viewer
-      ivX = rect.width  * 0.65 - targetX * desiredScale;
-      ivY = rect.height * 0.35 - targetY * desiredScale;
+      const iw = imagePreview.naturalWidth, ih = imagePreview.naturalHeight;
+      if (!iw || !rect.width) return;
+      if (scale !== undefined) ivScale = scale;
+      // Place target pixel at viewer center
+      ivX = rect.width  / 2 - px * ivScale;
+      ivY = rect.height / 2 - py * ivScale;
+      // Clamp so image edges don't scroll past viewer edges
+      const scaledW = iw * ivScale, scaledH = ih * ivScale;
+      if (scaledW > rect.width) {
+        ivX = Math.min(0, Math.max(rect.width  - scaledW, ivX));
+      } else {
+        ivX = (rect.width - scaledW) / 2;   // center if smaller
+      }
+      if (scaledH > rect.height) {
+        ivY = Math.min(0, Math.max(rect.height - scaledH, ivY));
+      } else {
+        ivY = (rect.height - scaledH) / 2;  // center if smaller
+      }
       ivApply();
     }
 
+    // Grid cell: zoom in and center on estimated cell position.
+    function scrollImageToCell(rowIndex, colIndex, totalRows, totalCols) {
+      if (!imagePreview.naturalHeight || totalRows <= 0) return;
+      const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
+      // Zoom to at least 1.5× so individual cells are visible
+      const scale = Math.max(1.5, ivScale);
+      // Estimated table region in image pixels
+      const tTop = ih * 0.18, tHeight = ih * 0.65;
+      const tLeft = iw * 0.03, tWidth  = iw * 0.94;
+      const rFrac = totalRows > 1 ? rowIndex / (totalRows - 1) : 0;
+      const cFrac = totalCols > 1 ? colIndex / (totalCols - 1) : 0;
+      const px = tLeft + cFrac * tWidth;
+      const py = tTop  + rFrac * tHeight;
+      _panTo(px, py, scale);
+    }
+
+    // Header fields: zoom in and center on upper-left area.
+    // Footer fields: zoom in and center on lower-left area.
     function scrollImageToField(position) {
-      // position: 'top' → upper-right corner of image; 'bottom' → lower-right corner
       if (!imagePreview.naturalHeight) return;
-      const ih = imagePreview.naturalHeight;
-      const iw = imagePreview.naturalWidth;
-      const rect = imageViewer.getBoundingClientRect();
-      const desiredScale = Math.max(2, ivScale);
-      ivScale = desiredScale;
-      // Target point is right-side center for both header and footer
-      const targetX = iw * 0.75;   // 75% across — right area
+      const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
+      const scale = Math.max(1.5, ivScale);
       if (position === 'top') {
-        const targetY = ih * 0.08; // near top
-        ivX = rect.width  * 0.75 - targetX * desiredScale;
-        ivY = rect.height * 0.20 - targetY * desiredScale;
+        _panTo(iw * 0.25, ih * 0.08, scale);
       } else {
-        const targetY = ih * 0.92; // near bottom
-        ivX = rect.width  * 0.75 - targetX * desiredScale;
-        ivY = rect.height * 0.80 - targetY * desiredScale;
+        _panTo(iw * 0.25, ih * 0.92, scale);
       }
-      ivApply();
     }
 
     // ── Table manipulation ────────────────────────────────────────────────
@@ -921,19 +917,6 @@
         currentRows.forEach(row => row.pop());
         renderTable();
       }
-    }
-
-    function insertColumn(beforeIndex) {
-      currentHeaders.splice(beforeIndex, 0, 'New Column');
-      currentRows.forEach(row => row.splice(beforeIndex, 0, ''));
-      renderTable();
-    }
-
-    function removeColumn(colIndex) {
-      if (currentHeaders.length <= 1) return;
-      currentHeaders.splice(colIndex, 1);
-      currentRows.forEach(row => row.splice(colIndex, 1));
-      renderTable();
     }
 
     // ── CSV Download ──────────────────────────────────────────────────────

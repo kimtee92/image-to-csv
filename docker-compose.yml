@@ -1,8 +1,8 @@
 services:
-  vllm-ocr:
+  vllm-llm:
     build: ./vllm
     image: vllm-ocr-glm:latest
-    container_name: vllm-ocr
+    container_name: vllm-llm
     ipc: host
     runtime: nvidia
     environment:
@@ -10,21 +10,21 @@ services:
       - HF_HOME=/workspace/hf_cache
       - HF_HUB_CACHE=/workspace/hf_cache
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
     volumes:
       - /workspace/hf_cache:/workspace/hf_cache
     command: >
-      --model zai-org/GLM-OCR
-      --served-model-name glm-ocr
-      --trust-remote-code
-      --max-model-len 4096
-      --gpu-memory-utilization 0.18
+      --model Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled
+      --served-model-name qwen3.5-27b
+      --max-model-len 32768
+      --gpu-memory-utilization 0.90
       --dtype bfloat16
       --host 0.0.0.0
       --port 8000
       --enable-prefix-caching
       --enable-chunked-prefill
-      --max-num-batched-tokens 4096
-      --max-num-seqs 8
+      --max-num-batched-tokens 8192
+      --max-num-seqs 4
       --limit-mm-per-prompt '{"image": 1}'
     deploy:
       resources:
@@ -49,13 +49,11 @@ services:
     ports:
       - "9001:8000"
     environment:
-      - VLLM_URL=http://vllm-ocr:8000
+      - VLLM_URL=http://vllm-llm:8000
       - LLM_URL=http://vllm-llm:8000
     volumes:
       - ./client:/app/static:ro
     depends_on:
-      vllm-ocr:
-        condition: service_healthy
       vllm-llm:
         condition: service_healthy
     restart: unless-stopped
@@ -65,49 +63,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
-
-  vllm-llm:
-    build: ./vllm
-    image: vllm-ocr-glm:latest
-    container_name: vllm-llm
-    ipc: host
-    runtime: nvidia
-    depends_on:
-      vllm-ocr:
-        condition: service_healthy
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=0
-      - HF_HOME=/workspace/hf_cache
-      - HF_HUB_CACHE=/workspace/hf_cache
-      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
-      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
-    volumes:
-      - /workspace/hf_cache:/workspace/hf_cache
-    command: >
-      --model Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled
-      --served-model-name qwen3.5-27b
-      --max-model-len 32768
-      --gpu-memory-utilization 0.78
-      --dtype bfloat16
-      --host 0.0.0.0
-      --port 8000
-      --enable-prefix-caching
-      --enable-chunked-prefill
-      --max-num-batched-tokens 8192
-      --max-num-seqs 4
-      --language-model-only
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    shm_size: '4gb'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 30
-      start_period: 300s

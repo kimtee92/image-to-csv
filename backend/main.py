@@ -371,13 +371,24 @@ async def ocr_image(
             pass
 
     # ── Build table-recognition prompt ──────────────────────────────────────
-    instruction = "Table Recognition:"
+    table_instruction = (
+        "Extract all tables from this image. Output as HTML using <table>, <thead>, <tbody>, "
+        "<tr>, <th>, <td> tags with rowspan/colspan where appropriate. "
+        "Output only the raw HTML table, no markdown fences or explanation."
+    )
     if template["table_headers"]:
-        instruction += "\nOutput the table using exactly these column headers: " + ", ".join(template["table_headers"])
+        table_instruction += (
+            " Use exactly these column headers: " + ", ".join(template["table_headers"]) + "."
+        )
+
+    text_instruction = (
+        "Transcribe all text from this image, preserving the document structure and layout. "
+        "Output in plain text or markdown. Include all headers, labels, values, and footer text."
+    )
 
     def _make_ocr_payload(text_prompt: str, max_tok: int) -> dict:
         return {
-            "model": "glm-ocr",
+            "model": "qwen3.5-27b",
             "messages": [
                 {
                     "role": "user",
@@ -392,11 +403,12 @@ async def ocr_image(
             ],
             "max_tokens": max_tok,
             "temperature": 0.0,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
     # ── Fire OCR: table recognition + full text recognition in parallel ───
-    table_payload = _make_ocr_payload(instruction, 2048)
-    text_payload = _make_ocr_payload("Text Recognition:", 2048)
+    table_payload = _make_ocr_payload(table_instruction, 2048)
+    text_payload = _make_ocr_payload(text_instruction, 2048)
 
     async def _post_ocr(payload: dict) -> dict:
         async with httpx.AsyncClient(timeout=180.0) as client:

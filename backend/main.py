@@ -13,7 +13,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 import httpx
-from PIL import Image, ImageFilter
+from PIL import Image
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,31 +24,12 @@ VLLM_URL = os.getenv("VLLM_URL", "http://vllm-ocr:8000")
 LLM_URL = os.getenv("LLM_URL", "http://vllm-llm:8000")
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
-# Minimum long-edge resolution before upscaling; GLM-OCR accuracy improves
-# significantly when text is at least ~1500px on the long edge.
-_MIN_LONG_EDGE = 1500
-
-
 def _preprocess_image(raw_bytes: bytes, content_type: str) -> tuple[bytes, str]:
-    """Upscale small images and return (png_bytes, 'image/png').
-
-    GLM-OCR's CogViT encoder benefits from higher resolution input.
-    Images whose long edge is already >= _MIN_LONG_EDGE are returned as-is
-    (re-encoded as PNG for lossless quality).
-    """
+    """Convert to RGB JPEG — let Qwen handle resolution natively."""
     img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
-    w, h = img.size
-    long_edge = max(w, h)
-    if long_edge < _MIN_LONG_EDGE:
-        scale = _MIN_LONG_EDGE / long_edge
-        new_w, new_h = int(w * scale), int(h * scale)
-        # LANCZOS gives best quality for document upscaling
-        img = img.resize((new_w, new_h), Image.LANCZOS)
-        # Mild unsharp mask improves OCR on blurry scans after upscaling
-        img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=120, threshold=3))
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=False)
-    return buf.getvalue(), "image/png"
+    img.save(buf, format="JPEG", quality=95)
+    return buf.getvalue(), "image/jpeg"
 
 
 # ── HTML table parser ──────────────────────────────────────────────────────
@@ -379,9 +360,10 @@ async def ocr_image(
     # ── Single comprehensive VLM call: OCR + extraction/transformation ──────
     instr_parts = [
         "Analyze this document image carefully.",
-        "Return a single valid JSON object with the following keys:",
+        "Return a single valid JSON object with the exact following keys IN THIS ORDER:",
         "",
-        '"full_text": Full transcription of all text in the document, preserving structure and layout.',
+        '"reasoning": "Analyze the layout and decipher any blurry or difficult-to-read text here first."',
+        '"full_text": "Full transcription of all text in the document, preserving structure and layout."',
         '"headers": Array of column header strings for the primary table.',
         '"rows": Array of row arrays — each row is an array of cell strings. Do NOT include the header row.',
     ]
@@ -412,9 +394,8 @@ async def ocr_image(
             }
         ],
         "max_tokens": 4096,
-        "temperature": 0.0,
+        "temperature": 0.1,
         "response_format": {"type": "json_object"},
-        "chat_template_kwargs": {"enable_thinking": False},
     }
 
     try:

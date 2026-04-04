@@ -1,7 +1,7 @@
 services:
   vllm-llm:
     build: ./vllm
-    image: vllm-ocr-glm:latest
+    image: vllm-qwen3.5-122b:latest
     container_name: vllm-llm
     ipc: host
     runtime: nvidia
@@ -10,21 +10,21 @@ services:
       - HF_HOME=/workspace/hf_cache
       - HF_HUB_CACHE=/workspace/hf_cache
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
-      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
     volumes:
       - /workspace/hf_cache:/workspace/hf_cache
     command: >
       --model Sehyo/Qwen3.5-122B-A10B-NVFP4
       --served-model-name qwen3.5-122b
-      --max-model-len 32768
-      --gpu-memory-utilization 0.72
+      --max-model-len 16384
+      --gpu-memory-utilization 0.90
+      --kv-cache-dtype fp8
       --dtype bfloat16
       --host 0.0.0.0
       --port 8000
+      --trust-remote-code
       --enable-prefix-caching
       --enable-chunked-prefill
-      --max-num-batched-tokens 8192
-      --max-num-seqs 4
+      --max-num-seqs 8
       --limit-mm-per-prompt '{"image": 1}'
       --moe-backend flashinfer_cutlass
     deploy:

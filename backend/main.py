@@ -370,210 +370,139 @@ async def ocr_image(
         except Exception:
             pass
 
-    # ── Build table-recognition prompt ──────────────────────────────────────
-    table_instruction = (
-        "Extract all tables from this image. Output as HTML using <table>, <thead>, <tbody>, "
-        "<tr>, <th>, <td> tags with rowspan/colspan where appropriate. "
-        "Output only the raw HTML table, no markdown fences or explanation."
-    )
+    # Determine what's needed before building the prompt
+    need_fields = bool(template["header_fields"] or template["footer_fields"])
+    has_user_prompt = bool(prompt.strip())
+    all_meta_fields = template.get("header_fields", []) + template.get("footer_fields", [])
+    field_labels = [row[0].rstrip(":").strip() for row in all_meta_fields if row[0]]
+
+    # ── Single comprehensive VLM call: OCR + extraction/transformation ──────
+    instr_parts = [
+        "Analyze this document image carefully.",
+        "Return a single valid JSON object with the following keys:",
+        "",
+        '"full_text": Full transcription of all text in the document, preserving structure and layout.',
+        '"headers": Array of column header strings for the primary table.',
+        '"rows": Array of row arrays — each row is an array of cell strings. Do NOT include the header row.',
+    ]
     if template["table_headers"]:
-        table_instruction += (
-            " Use exactly these column headers: " + ", ".join(template["table_headers"]) + "."
+        instr_parts.append(
+            f'  Use exactly these column headers for "headers": {json.dumps(template["table_headers"])}'
         )
+    if need_fields:
+        instr_parts.append('"fields": Extract these field values from the document header/footer:')
+        for label in field_labels:
+            instr_parts.append(f'  "{label}": ""')
+    if has_user_prompt:
+        instr_parts += ["", 'Transformation instructions — apply when populating "rows":', prompt.strip()]
+    instr_parts += ["", "Output ONLY valid JSON. No markdown fences, no explanation."]
 
-    text_instruction = (
-        "Transcribe all text from this image, preserving the document structure and layout. "
-        "Output in plain text or markdown. Include all headers, labels, values, and footer text."
-    )
-
-    def _make_ocr_payload(text_prompt: str, max_tok: int) -> dict:
-        return {
-            "model": "qwen3.5-27b",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{mime_type};base64,{b64_image}"},
-                        },
-                        {"type": "text", "text": text_prompt},
-                    ],
-                }
-            ],
-            "max_tokens": max_tok,
-            "temperature": 0.0,
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
-
-    # ── Fire OCR: table recognition + full text recognition in parallel ───
-    table_payload = _make_ocr_payload(table_instruction, 2048)
-    text_payload = _make_ocr_payload(text_instruction, 2048)
-
-    async def _post_ocr(payload: dict) -> dict:
-        async with httpx.AsyncClient(timeout=180.0) as client:
-            resp = await client.post(f"{VLLM_URL}/v1/chat/completions", json=payload)
-            resp.raise_for_status()
-            return resp.json()
+    payload = {
+        "model": "qwen3.5-122b",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{b64_image}"},
+                    },
+                    {"type": "text", "text": "\n".join(instr_parts)},
+                ],
+            }
+        ],
+        "max_tokens": 4096,
+        "temperature": 0.0,
+        "response_format": {"type": "json_object"},
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
 
     try:
-        table_result, text_result = await asyncio.gather(
-            _post_ocr(table_payload), _post_ocr(text_payload)
-        )
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(f"{VLLM_URL}/v1/chat/completions", json=payload)
+            resp.raise_for_status()
+            raw_result = resp.json()
     except httpx.HTTPStatusError as e:
         raise HTTPException(502, f"OCR model error: {e.response.text}")
     except (httpx.ConnectError, httpx.ConnectTimeout):
         raise HTTPException(503, "Cannot connect to OCR model server")
 
-    raw_text = table_result["choices"][0]["message"]["content"]
-    full_ocr_text = text_result["choices"][0]["message"]["content"]
+    raw_content = raw_result["choices"][0]["message"]["content"]
+    raw_content = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
+    logger.info("VLM response (first 2000): %s", raw_content[:2000])
 
-    table_data = parse_table(raw_text)
-    non_table = _extract_non_table_text(raw_text)
-    table_data["text_above"] = non_table["text_above"]
-    table_data["text_below"] = non_table["text_below"]
-    table_data["raw"] = raw_text
+    # Initialise table_data with safe defaults
+    table_data: dict = {
+        "headers": [], "rows": [], "text_above": [], "text_below": [],
+        "raw": raw_content, "llm_applied": False, "llm_raw": raw_content,
+    }
+    full_ocr_text = raw_content  # fallback if JSON parse fails
 
-    # Apply template column headers if provided
-    if template["table_headers"]:
-        table_data["headers"] = template["table_headers"]
-        n = len(template["table_headers"])
-        for row in table_data["rows"]:
-            while len(row) < n:
-                row.append("")
-            del row[n:]
+    try:
+        json_match = re.search(r"\{[\s\S]*\}", raw_content)
+        if not json_match:
+            raise ValueError("No JSON object found in VLM response")
+        result_json = json.loads(json_match.group(0))
 
-    # ── Second layer: Qwen3.5-9B transformation ────────────────────────────
-    need_fields = bool(template["header_fields"] or template["footer_fields"])
-    has_user_prompt = bool(prompt.strip())
-    table_data["llm_applied"] = False
-    table_data["llm_raw"] = ""
+        full_ocr_text = result_json.get("full_text", raw_content)
 
-    if need_fields or has_user_prompt:
-        all_meta_fields = template.get("header_fields", []) + template.get("footer_fields", [])
-        # Normalize labels: strip trailing colons so LLM key matching is clean
-        field_labels = [row[0].rstrip(":").strip() for row in all_meta_fields if row[0]]
+        # Headers
+        raw_headers = result_json.get("headers", [])
+        if isinstance(raw_headers, list):
+            table_data["headers"] = [str(h) for h in raw_headers]
+        if template["table_headers"]:
+            table_data["headers"] = template["table_headers"]
 
-        # Build table as CSV text
-        table_csv_lines = []
-        if table_data["headers"]:
-            table_csv_lines.append(",".join(table_data["headers"]))
-        for row in table_data["rows"]:
-            table_csv_lines.append(",".join(str(c) for c in row))
-        table_csv_text = "\n".join(table_csv_lines)
+        # Rows — normalise to n columns, drop empty rows
+        n = len(table_data["headers"])
+        raw_rows = result_json.get("rows", [])
+        if isinstance(raw_rows, list):
+            cleaned: list[list[str]] = []
+            for row in raw_rows:
+                if isinstance(row, list):
+                    r = [str(c) for c in row]
+                    while len(r) < n:
+                        r.append("")
+                    if n:
+                        r = r[:n]
+                    if any(c for c in r):
+                        cleaned.append(r)
+            table_data["rows"] = cleaned
 
-        # Use full_ocr_text (Text Recognition pass) for field extraction context.
-        # The Table Recognition pass returns only the table HTML — header/footer
-        # metadata lives only in the full text scan.
-        header_context = full_ocr_text.strip()
+        if (need_fields or has_user_prompt) and table_data["rows"]:
+            table_data["llm_applied"] = True
 
-        # Construct the LLM prompt
-        llm_parts = []
-        if header_context:
-            llm_parts.append("Full document text (use this to extract the header/footer fields):")
-            llm_parts.append(header_context)
-            llm_parts.append("")
-        llm_parts.append("Extracted Table:")
-        llm_parts.append(table_csv_text)
-        if has_user_prompt:
-            llm_parts.append("")
-            llm_parts.append("Transformation Instructions:")
-            llm_parts.append(prompt.strip())
-        llm_parts.append("")
-        llm_parts.append("Task: Return a single JSON object with these keys:")
-        if need_fields:
-            llm_parts.append('"fields": an object containing these keys extracted from the document header/footer text:')
-            for label in field_labels:
-                llm_parts.append(f'  "{label}": ""')
-        if table_data["rows"]:
-            llm_parts.append('"table": an array of arrays — the table data rows only (no header row).')
-            if has_user_prompt:
-                llm_parts.append("  Apply the transformation instructions above to the table values.")
-            llm_parts.append(f'  Table columns are: {json.dumps(table_data["headers"])}')
-        llm_parts.append("")
-        llm_parts.append("Output ONLY the raw JSON. No markdown fences, no commentary.")
+        # Fields extracted by the model
+        if need_fields and "fields" in result_json and isinstance(result_json["fields"], dict):
+            extracted_lower = {
+                k.lower().strip().rstrip(":"): v for k, v in result_json["fields"].items()
+            }
 
-        llm_prompt = "\n".join(llm_parts)
-        logger.info("LLM prompt length: %d chars", len(llm_prompt))
+            def _fill(fields: list) -> list:
+                out = []
+                for row in fields:
+                    label = row[0].rstrip(":").strip()
+                    default = row[1] if len(row) > 1 else ""
+                    value = extracted_lower.get(label.lower(), default)
+                    out.append([label, value])
+                return out
 
-        llm_payload = {
-            "model": "qwen3.5-27b",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a data extraction and transformation assistant. Respond ONLY with valid JSON. Every field must be present. Never include markdown, explanations, or extra text.",
-                },
-                {"role": "user", "content": llm_prompt},
-            ],
-            "max_tokens": 2048,
-            "temperature": 0.05,
-            "top_p": 0.9,
-            "response_format": {"type": "json_object"},
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
+            if template["header_fields"]:
+                table_data["template_header_fields"] = _fill(template["header_fields"])
+            if template["footer_fields"]:
+                table_data["template_footer_fields"] = _fill(template["footer_fields"])
+            table_data["llm_applied"] = True
 
-        try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                llm_resp = await client.post(f"{LLM_URL}/v1/chat/completions", json=llm_payload)
-                llm_resp.raise_for_status()
-                llm_result = llm_resp.json()
-                llm_raw = llm_result["choices"][0]["message"]["content"]
-                logger.info("LLM raw response (first 2000): %s", llm_raw[:2000])
-                table_data["llm_raw"] = llm_raw
+    except Exception as e:
+        logger.warning("VLM JSON parse failed (%s): %s — falling back to table parser", type(e).__name__, e)
+        fallback = parse_table(raw_content)
+        table_data["headers"] = fallback.get("headers", [])
+        table_data["rows"] = fallback.get("rows", [])
+        non_table = _extract_non_table_text(raw_content)
+        table_data["text_above"] = non_table["text_above"]
+        table_data["text_below"] = non_table["text_below"]
 
-                # Strip thinking tags if present
-                llm_raw = re.sub(r"<think>[\s\S]*?</think>", "", llm_raw).strip()
-
-                # Extract the JSON — try object first, then bare array (wrap as {"table": [...]})
-                json_match = re.search(r"\{[\s\S]*\}", llm_raw)
-                if json_match:
-                    llm_json = json.loads(json_match.group(0))
-                else:
-                    arr_match = re.search(r"\[[\s\S]*\]", llm_raw)
-                    if not arr_match:
-                        raise ValueError(f"No JSON found in LLM response: {llm_raw[:300]}")
-                    llm_json = {"table": json.loads(arr_match.group(0))}
-
-                # Apply extracted fields (case-insensitive key matching)
-                if "fields" in llm_json and isinstance(llm_json["fields"], dict):
-                    extracted_lower = {k.lower().strip().rstrip(":"): v for k, v in llm_json["fields"].items()}
-
-                    def _fill(fields):
-                        result = []
-                        for row in fields:
-                            label = row[0].rstrip(":").strip()
-                            default = row[1] if len(row) > 1 else ""
-                            value = extracted_lower.get(label.lower(), default)
-                            result.append([label, value])
-                        return result
-
-                    if template["header_fields"]:
-                        table_data["template_header_fields"] = _fill(template["header_fields"])
-                    if template["footer_fields"]:
-                        table_data["template_footer_fields"] = _fill(template["footer_fields"])
-
-                # Apply transformed table rows
-                if "table" in llm_json and isinstance(llm_json["table"], list):
-                    cleaned_rows = []
-                    n = len(table_data["headers"]) if table_data["headers"] else 0
-                    for row in llm_json["table"]:
-                        if isinstance(row, list):
-                            str_row = [str(c) for c in row]
-                            while len(str_row) < n:
-                                str_row.append("")
-                            if n:
-                                str_row = str_row[:n]
-                            cleaned_rows.append(str_row)
-                    if cleaned_rows:
-                        table_data["rows"] = cleaned_rows
-                        table_data["llm_applied"] = True
-                elif "fields" in llm_json:
-                    table_data["llm_applied"] = True
-
-        except Exception as e:
-            logger.warning("LLM layer failed (%s): %s", type(e).__name__, e)
-
-    # Ensure template fields exist in response even if LLM didn't run
+    # Ensure template fields exist in response even if extraction failed
     if template["header_fields"] and "template_header_fields" not in table_data:
         table_data["template_header_fields"] = template["header_fields"]
     if template["footer_fields"] and "template_footer_fields" not in table_data:

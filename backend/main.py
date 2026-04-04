@@ -359,13 +359,21 @@ async def ocr_image(
 
     # ── Single comprehensive VLM call: OCR + extraction/transformation ──────
     instr_parts = [
-        "Analyze this document image carefully.",
-        "Return a single valid JSON object with the exact following keys IN THIS ORDER:",
+        "You are an expert data extraction AI specializing in complex, handwritten forms and mixed tabular data.",
+        "Analyze the image carefully and return a single valid JSON object with the exact following keys IN THIS ORDER:",
         "",
-        '"reasoning": "Analyze the layout and decipher any blurry or difficult-to-read text here first."',
-        '"full_text": "Full transcription of all text in the document, preserving structure and layout."',
-        '"headers": Array of column header strings for the primary table.',
-        '"rows": Array of row arrays — each row is an array of cell strings. Do NOT include the header row.',
+        '"reasoning": "First, analyze the document layout. Distinguish between global metadata (form fields/headers) and the main tabular grid. Identify the likely data types for each column based on their headers. Explain how you will handle blurry cells and nested structures."',
+        '"fields": (If requested) Extract global form fields, metadata, or header/footer key-value pairs exactly as written.',
+        '"full_text": "Full transcription of all text, preserving the layout."',
+        '"headers": Array of column header strings. Combine nested or multi-tier headers into a single logical string per column (e.g., \'Category - Subcategory\').',
+        '"rows": Array of row arrays (do not include headers).',
+        "",
+        "CRITICAL RULES FOR MIXED DATA:",
+        "1. METADATA PROTECTION: Transcribe non-grid form fields (Names, Addresses, Form IDs) exactly as written. Do not auto-correct alphanumeric strings in this section.",
+        "2. DYNAMIC DATA-TYPE INFERENCE: Inside the grid, look at the column header to determine the expected data type. If a column expects Numbers, Dates, Times, or IDs, correct obvious OCR artifacts (e.g., 'O' -> '0', 'l' -> '1', 'S' -> '5'). If a column expects Text or Names, leave letters intact.",
+        "3. ANOMALIES & NOTES: Transcribe deliberate text in numeric columns (e.g., 'N/A', 'Deceased', 'Void') exactly. If there are margin notes spanning multiple cells, place the text in the most logically appropriate cell.",
+        "4. EMPTY CELLS: If a grid cell is explicitly blank, crossed out, or empty, output an empty string \"\" for that array position.",
+        "5. STRICT ALIGNMENT: Ensure every row array has the exact same number of items as the headers array. Output ONLY valid JSON.",
     ]
     if template["table_headers"]:
         instr_parts.append(

@@ -395,13 +395,14 @@
       ivApply();
     }
     function imgViewerReset() {
-      const rect = imageViewer.getBoundingClientRect();
+      const W = imageViewer.offsetWidth;
+      const H = imageViewer.offsetHeight;
       const iw = imagePreview.naturalWidth, ih = imagePreview.naturalHeight;
-      if (!iw) return;
-      const scale = Math.min(rect.width / iw, rect.height / ih, 1);
+      if (!iw || !W || !H) return;
+      const scale = Math.min(W / iw, H / ih, 1);
       ivScale = scale;
-      ivX = (rect.width - iw * scale) / 2;
-      ivY = (rect.height - ih * scale) / 2;
+      ivX = (W - iw * scale) / 2;
+      ivY = (H - ih * scale) / 2;
       ivApply();
     }
     imageViewer.addEventListener('wheel', (e) => {
@@ -829,26 +830,32 @@
 
     // ── Field → image position mapping ────────────────────────────────────
     // Helper: pan so that image-pixel (px,py) is centered in the viewer.
-    // Optionally sets zoom scale. Clamps so image edges stay within bounds.
+    // Uses offsetWidth/offsetHeight for stable dimensions regardless of scroll
+    // position or viewport clipping (getBoundingClientRect can return partial
+    // heights when the viewer is scrolled off-screen on non-sticky layouts).
     function _panTo(px, py, scale) {
-      const rect = imageViewer.getBoundingClientRect();
+      const W = imageViewer.offsetWidth;
+      const H = imageViewer.offsetHeight;
       const iw = imagePreview.naturalWidth, ih = imagePreview.naturalHeight;
-      if (!iw || !rect.width) return;
+      if (!iw || !W || !H) return;
       if (scale !== undefined) ivScale = scale;
-      // Place target pixel at viewer center
-      ivX = rect.width  / 2 - px * ivScale;
-      ivY = rect.height / 2 - py * ivScale;
-      // Clamp so image edges don't scroll past viewer edges
       const scaledW = iw * ivScale, scaledH = ih * ivScale;
-      if (scaledW > rect.width) {
-        ivX = Math.min(0, Math.max(rect.width  - scaledW, ivX));
+      // Clamp target pixel so it stays within the image bounds
+      const safePx = Math.max(0, Math.min(px, iw));
+      const safePy = Math.max(0, Math.min(py, ih));
+      // Place target pixel at viewer center
+      ivX = W / 2 - safePx * ivScale;
+      ivY = H / 2 - safePy * ivScale;
+      // Clamp so image edges don't scroll past viewer edges
+      if (scaledW > W) {
+        ivX = Math.min(0, Math.max(W - scaledW, ivX));
       } else {
-        ivX = (rect.width - scaledW) / 2;   // center if smaller
+        ivX = (W - scaledW) / 2;
       }
-      if (scaledH > rect.height) {
-        ivY = Math.min(0, Math.max(rect.height - scaledH, ivY));
+      if (scaledH > H) {
+        ivY = Math.min(0, Math.max(H - scaledH, ivY));
       } else {
-        ivY = (rect.height - scaledH) / 2;  // center if smaller
+        ivY = (H - scaledH) / 2;
       }
       ivApply();
     }
@@ -857,28 +864,26 @@
     function scrollImageToCell(rowIndex, colIndex, totalRows, totalCols) {
       if (!imagePreview.naturalHeight || totalRows <= 0) return;
       const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
-      // Zoom to at least 1.5× so individual cells are visible
       const scale = Math.max(1.5, ivScale);
-      // Estimated table region in image pixels
-      const tTop = ih * 0.18, tHeight = ih * 0.65;
-      const tLeft = iw * 0.03, tWidth  = iw * 0.94;
-      const rFrac = totalRows > 1 ? rowIndex / (totalRows - 1) : 0;
-      const cFrac = totalCols > 1 ? colIndex / (totalCols - 1) : 0;
-      const px = tLeft + cFrac * tWidth;
-      const py = tTop  + rFrac * tHeight;
+      // Conservative row/col fractions — clamp within 10-90% to stay
+      // inside the document area even when estimates are slightly off.
+      const rFrac = totalRows > 1 ? rowIndex / totalRows : 0.5;
+      const cFrac = totalCols > 1 ? colIndex / totalCols : 0.5;
+      const px = iw * (0.05 + cFrac * 0.90);
+      const py = ih * (0.10 + rFrac * 0.75);
       _panTo(px, py, scale);
     }
 
-    // Header fields: zoom in and center on upper-left area.
-    // Footer fields: zoom in and center on lower-left area.
+    // Header fields: center on upper portion of image.
+    // Footer fields: center on lower portion of image.
     function scrollImageToField(position) {
       if (!imagePreview.naturalHeight) return;
       const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
       const scale = Math.max(1.5, ivScale);
       if (position === 'top') {
-        _panTo(iw * 0.25, ih * 0.08, scale);
+        _panTo(iw * 0.25, ih * 0.10, scale);
       } else {
-        _panTo(iw * 0.25, ih * 0.92, scale);
+        _panTo(iw * 0.25, ih * 0.82, scale);
       }
     }
 

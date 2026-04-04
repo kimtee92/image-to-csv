@@ -360,31 +360,45 @@ async def ocr_image(
     # ── Single comprehensive VLM call: OCR + extraction/transformation ──────
     instr_parts = [
         "You are an expert data extraction AI specializing in complex, handwritten forms and mixed tabular data.",
-        "Analyze the image carefully and return a single valid JSON object with the exact following keys IN THIS ORDER:",
+        "Analyze the image carefully and return a single valid JSON object with the following keys IN THIS ORDER:",
         "",
-        '"reasoning": "First, analyze the document layout. Distinguish between global metadata (form fields/headers) and the main tabular grid. Identify the likely data types for each column based on their headers. Explain how you will handle blurry cells and nested structures."',
-        '"fields": (If requested) Extract global form fields, metadata, or header/footer key-value pairs exactly as written.',
-        '"full_text": "Full transcription of all text, preserving the layout."',
-        '"headers": Array of column header strings. Combine nested or multi-tier headers into a single logical string per column (e.g., \'Category - Subcategory\').',
-        '"rows": Array of row arrays (do not include headers).',
-        "",
-        "CRITICAL RULES FOR MIXED DATA:",
-        "1. METADATA PROTECTION: Transcribe non-grid form fields (Names, Addresses, Form IDs) exactly as written. Do not auto-correct alphanumeric strings in this section.",
-        "2. DYNAMIC DATA-TYPE INFERENCE: Inside the grid, look at the column header to determine the expected data type. If a column expects Numbers, Dates, Times, or IDs, correct obvious OCR artifacts (e.g., 'O' -> '0', 'l' -> '1', 'S' -> '5'). If a column expects Text or Names, leave letters intact.",
-        "3. ANOMALIES & NOTES: Transcribe deliberate text in numeric columns (e.g., 'N/A', 'Deceased', 'Void') exactly. If there are margin notes spanning multiple cells, place the text in the most logically appropriate cell.",
-        "4. EMPTY CELLS: If a grid cell is explicitly blank, crossed out, or empty, output an empty string \"\" for that array position.",
-        "5. STRICT ALIGNMENT: Ensure every row array has the exact same number of items as the headers array. Output ONLY valid JSON.",
+        '"reasoning": 1-3 sentences: identify document type, column data types, and any blurry/ambiguous regions.',
     ]
+
+    # "fields" key — only include in schema when actually needed
+    if need_fields:
+        fields_schema = ", ".join(f'"{l}"' for l in field_labels)
+        instr_parts.append(
+            f'"fields": Object with exactly these keys: {{{fields_schema}}} — extract their values from the document metadata, header, or footer.'
+        )
+
+    instr_parts += [
+        '"full_text": Full transcription of all text, preserving the layout.',
+    ]
+
     if template["table_headers"]:
         instr_parts.append(
-            f'  Use exactly these column headers for "headers": {json.dumps(template["table_headers"])}'
+            f'"headers": Use exactly these column headers: {json.dumps(template["table_headers"])}'
         )
-    if need_fields:
-        instr_parts.append('"fields": Extract these field values from the document header/footer:')
-        for label in field_labels:
-            instr_parts.append(f'  "{label}": ""')
+    else:
+        instr_parts.append(
+            '"headers": Array of column header strings. Combine nested/multi-tier headers into one string per column (e.g., "Category - Subcategory").'
+        )
+
+    instr_parts += [
+        '"rows": Array of row arrays — each row has exactly the same number of items as headers. Do NOT include the header row.',
+        "",
+        "RULES:",
+        "1. METADATA PROTECTION: Transcribe non-grid form fields (Names, Addresses, IDs) exactly as written.",
+        "2. DATA-TYPE INFERENCE: In each grid column, correct OCR artifacts based on expected type (O→0, l→1 for number/date/time columns). Leave text/name columns intact.",
+        "3. ANOMALIES: Transcribe deliberate text in numeric cells (N/A, Void, Deceased) exactly as written.",
+        "4. EMPTY CELLS: Blank, crossed-out, or empty cells → empty string \"\".",
+        "5. ALIGNMENT: Every row array must have exactly the same length as headers.",
+    ]
+
     if has_user_prompt:
-        instr_parts += ["", 'Transformation instructions — apply when populating "rows":', prompt.strip()]
+        instr_parts += ["", "Transformation instructions for the rows:", prompt.strip()]
+
     instr_parts += ["", "Output ONLY valid JSON. No markdown fences, no explanation."]
 
     payload = {
@@ -401,7 +415,7 @@ async def ocr_image(
                 ],
             }
         ],
-        "max_tokens": 4096,
+        "max_tokens": 8192,
         "temperature": 0.1,
         "response_format": {"type": "json_object"},
     }

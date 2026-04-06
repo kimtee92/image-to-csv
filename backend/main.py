@@ -329,7 +329,7 @@ async def ocr_image(
     prompt: str = Form(""),
     csv_template: UploadFile | None = File(None),
 ):
-    """Upload an image and extract table data using GLM-OCR."""
+    """Upload an image and extract table data using a two-stage Chandra→Qwen pipeline."""
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "Only image files are supported")
 
@@ -357,52 +357,16 @@ async def ocr_image(
     all_meta_fields = template.get("header_fields", []) + template.get("footer_fields", [])
     field_labels = [row[0].rstrip(":").strip() for row in all_meta_fields if row[0]]
 
-    # ── Single comprehensive VLM call: OCR + extraction/transformation ──────
-    instr_parts = [
-        "You are an expert data extraction AI specializing in complex, handwritten forms and mixed tabular data.",
-        "Analyze the image carefully and return a single valid JSON object with the following keys IN THIS ORDER:",
-        "",
-        '"reasoning": 1-3 sentences: identify document type, column data types, and any blurry/ambiguous regions.',
-    ]
-
-    # "fields" key — only include in schema when actually needed
-    if need_fields:
-        fields_schema = ", ".join(f'"{l}"' for l in field_labels)
-        instr_parts.append(
-            f'"fields": Object with exactly these keys: {{{fields_schema}}} — extract their values from the document metadata, header, or footer.'
-        )
-
-    instr_parts += [
-        '"full_text": Full transcription of all text, preserving the layout.',
-    ]
-
-    if template["table_headers"]:
-        instr_parts.append(
-            f'"headers": Use exactly these column headers: {json.dumps(template["table_headers"])}'
-        )
-    else:
-        instr_parts.append(
-            '"headers": Array of column header strings. Combine nested/multi-tier headers into one string per column (e.g., "Category - Subcategory").'
-        )
-
-    instr_parts += [
-        '"rows": Array of row arrays — each row has exactly the same number of items as headers. Do NOT include the header row.',
-        "",
-        "RULES:",
-        "1. METADATA PROTECTION: Transcribe non-grid form fields (Names, Addresses, IDs) exactly as written.",
-        "2. DATA-TYPE INFERENCE: In each grid column, correct OCR artifacts based on expected type (O→0, l→1 for number/date/time columns). Leave text/name columns intact.",
-        "3. ANOMALIES: Transcribe deliberate text in numeric cells (N/A, Void, Deceased) exactly as written.",
-        "4. EMPTY CELLS: Blank, crossed-out, or empty cells → empty string \"\".",
-        "5. ALIGNMENT: Every row array must have exactly the same length as headers.",
-    ]
-
-    if has_user_prompt:
-        instr_parts += ["", "Transformation instructions for the rows:", prompt.strip()]
-
-    instr_parts += ["", "Output ONLY valid JSON. No markdown fences, no explanation."]
-
-    payload = {
-        "model": "qwen3.5-122b",
+    # ── Stage 1: Chandra OCR — image → raw OCR transcription ─────────────────
+    chandra_prompt = (
+        "Transcribe this document image to text. "
+        "Capture all text exactly as written. "
+        "For tables, use pipe-table syntax (| col | col |) preserving all rows and headers. "
+        "For form fields, output as 'Label: Value' on separate lines. "
+        "Preserve reading order. Output only the transcription."
+    )
+    ocr_payload = {
+        "model": "chandra",
         "messages": [
             {
                 "role": "user",
@@ -411,35 +375,117 @@ async def ocr_image(
                         "type": "image_url",
                         "image_url": {"url": f"data:{mime_type};base64,{b64_image}"},
                     },
-                    {"type": "text", "text": "\n".join(instr_parts)},
+                    {"type": "text", "text": chandra_prompt},
                 ],
             }
         ],
-        "max_tokens": 8192,
-        "temperature": 0.1,
-        "response_format": {"type": "json_object"},
+        "max_tokens": 16384,
+        "temperature": 0.0,
     }
 
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(f"{VLLM_URL}/v1/chat/completions", json=payload)
-            resp.raise_for_status()
-            raw_result = resp.json()
+            ocr_resp = await client.post(f"{VLLM_URL}/v1/chat/completions", json=ocr_payload)
+            ocr_resp.raise_for_status()
+            ocr_result = ocr_resp.json()
     except httpx.HTTPStatusError as e:
         raise HTTPException(502, f"OCR model error: {e.response.text}")
     except (httpx.ConnectError, httpx.ConnectTimeout):
         raise HTTPException(503, "Cannot connect to OCR model server")
 
+    ocr_text = ocr_result["choices"][0]["message"]["content"]
+    ocr_text = re.sub(r"<think>[\s\S]*?</think>", "", ocr_text).strip()
+    logger.info("Chandra OCR output (first 1000): %s", ocr_text[:1000])
+
+    # ── Stage 2: Qwen LLM — OCR text → structured JSON ───────────────────────
+    instr_parts = [
+        "You are an expert data extraction AI. Below is the raw OCR transcription of a document.",
+        "",
+        "Analyze it using the **Zoned & Agnostic** framework:",
+        "  \u2022 ZONE 1 \u2014 HEADER: Key-value metadata fields appearing ABOVE the main table.",
+        "  \u2022 ZONE 2 \u2014 TABLE: The primary data grid with column headers and data rows.",
+        "  \u2022 ZONE 3 \u2014 FOOTER: Key-value metadata fields appearing BELOW the main table.",
+        "",
+        "Return a single valid JSON object with the following keys IN THIS ORDER:",
+        "",
+        '"reasoning": 1-3 sentences: identify document type, column data types, and any ambiguous regions.',
+    ]
+
+    if need_fields:
+        fields_schema = ", ".join(f'"{l}"' for l in field_labels)
+        instr_parts.append(
+            f'"fields": Object with exactly these keys: {{{fields_schema}}} \u2014 extract values from ZONE 1 and ZONE 3 metadata.'
+        )
+
+    instr_parts += [
+        '"full_text": The complete OCR transcription passed through unchanged.',
+    ]
+
+    if template["table_headers"]:
+        instr_parts.append(
+            f'"headers": Use exactly these column headers: {json.dumps(template["table_headers"])}'
+        )
+    else:
+        instr_parts.append(
+            '"headers": Array of column header strings from ZONE 2. Combine multi-tier headers with a dash separator (e.g., "Morning - In").'
+        )
+
+    instr_parts += [
+        '"rows": Array of row arrays from ZONE 2 \u2014 each row must have exactly the same number of items as headers. Do NOT include the header row.',
+        "",
+        "RULES:",
+        "1. METADATA PROTECTION: Transcribe ZONE 1/3 fields exactly as written.",
+        "2. DATA-TYPE INFERENCE: In ZONE 2 columns, correct OCR artifacts by inferred type (O\u21920, l\u21921 for numeric/date/time). Leave text/name columns intact.",
+        "3. ANOMALIES: Transcribe deliberate text in numeric cells (N/A, Void, Deceased) exactly.",
+        "4. EMPTY CELLS: Blank, crossed-out, or empty cells \u2192 empty string \"\".",
+        "5. ALIGNMENT: Every row array must have exactly the same length as headers.",
+    ]
+
+    if has_user_prompt:
+        instr_parts += ["", "Additional transformation instructions:", prompt.strip()]
+
+    instr_parts += [
+        "",
+        "OCR TRANSCRIPTION TO PROCESS:",
+        ocr_text,
+        "",
+        "Output ONLY valid JSON. No markdown fences, no explanation.",
+    ]
+
+    payload = {
+        "model": "qwen3.5-35b",
+        "messages": [
+            {
+                "role": "user",
+                "content": "\n".join(instr_parts),
+            }
+        ],
+        "max_tokens": 8192,
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(f"{LLM_URL}/v1/chat/completions", json=payload)
+            resp.raise_for_status()
+            raw_result = resp.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"LLM model error: {e.response.text}")
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        raise HTTPException(503, "Cannot connect to LLM model server")
+
     raw_content = raw_result["choices"][0]["message"]["content"]
     raw_content = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
-    logger.info("VLM response (first 2000): %s", raw_content[:2000])
+    logger.info("Qwen LLM response (first 2000): %s", raw_content[:2000])
 
     # Initialise table_data with safe defaults
     table_data: dict = {
         "headers": [], "rows": [], "text_above": [], "text_below": [],
-        "raw": raw_content, "llm_applied": False, "llm_raw": raw_content,
+        "raw": ocr_text, "llm_applied": False, "llm_raw": raw_content,
     }
-    full_ocr_text = raw_content  # fallback if JSON parse fails
+    full_ocr_text = ocr_text  # fallback if JSON parse fails
 
     try:
         json_match = re.search(r"\{[\s\S]*\}", raw_content)
@@ -447,7 +493,7 @@ async def ocr_image(
             raise ValueError("No JSON object found in VLM response")
         result_json = json.loads(json_match.group(0))
 
-        full_ocr_text = result_json.get("full_text", raw_content)
+        full_ocr_text = result_json.get("full_text", ocr_text)
 
         # Headers
         raw_headers = result_json.get("headers", [])
@@ -497,11 +543,11 @@ async def ocr_image(
             table_data["llm_applied"] = True
 
     except Exception as e:
-        logger.warning("VLM JSON parse failed (%s): %s — falling back to table parser", type(e).__name__, e)
-        fallback = parse_table(raw_content)
+        logger.warning("LLM JSON parse failed (%s): %s — falling back to table parser", type(e).__name__, e)
+        fallback = parse_table(ocr_text)
         table_data["headers"] = fallback.get("headers", [])
         table_data["rows"] = fallback.get("rows", [])
-        non_table = _extract_non_table_text(raw_content)
+        non_table = _extract_non_table_text(ocr_text)
         table_data["text_above"] = non_table["text_above"]
         table_data["text_below"] = non_table["text_below"]
 

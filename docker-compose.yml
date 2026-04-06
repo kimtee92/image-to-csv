@@ -1,7 +1,50 @@
 services:
+  vllm-ocr:
+    build: ./vllm
+    image: vllm-chandra-ocr-2:latest
+    container_name: vllm-ocr
+    ipc: host
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - HF_HOME=/workspace/hf_cache
+      - HF_HUB_CACHE=/workspace/hf_cache
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - /workspace/hf_cache:/workspace/hf_cache
+    command: >
+      --model datalab-to/chandra-ocr-2
+      --served-model-name chandra
+      --max-model-len 18000
+      --gpu-memory-utilization 0.30
+      --dtype bfloat16
+      --host 0.0.0.0
+      --port 8000
+      --trust-remote-code
+      --no-enforce-eager
+      --enable-prefix-caching
+      --max-num-seqs 16
+      --mm-processor-kwargs '{"min_pixels": 3136, "max_pixels": 6291456}'
+      --disable-log-stats
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '2gb'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 300s
+
   vllm-llm:
     build: ./vllm
-    image: vllm-qwen3.5-122b:latest
+    image: vllm-qwen3.5-35b-gptq:latest
     container_name: vllm-llm
     ipc: host
     runtime: nvidia
@@ -13,11 +56,11 @@ services:
     volumes:
       - /workspace/hf_cache:/workspace/hf_cache
     command: >
-      --model Sehyo/Qwen3.5-122B-A10B-NVFP4
-      --served-model-name qwen3.5-122b
-      --max-model-len 16384
-      --gpu-memory-utilization 0.90
-      --kv-cache-dtype auto
+      --model Qwen/Qwen3.5-35B-A3B-GPTQ-Int4
+      --served-model-name qwen3.5-35b
+      --max-model-len 32768
+      --gpu-memory-utilization 0.50
+      --kv-cache-dtype fp8
       --dtype bfloat16
       --host 0.0.0.0
       --port 8000
@@ -25,12 +68,12 @@ services:
       --enable-prefix-caching
       --prefix-caching-hash-algo xxhash
       --enable-chunked-prefill
+      --moe-backend flashinfer_cutlass
       --max-num-seqs 8
-      --limit-mm-per-prompt '{"image": 1}'
-      --moe-backend auto
-      --optimization-level 3
-      --performance-mode throughput
       --disable-log-stats
+    depends_on:
+      vllm-ocr:
+        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -54,11 +97,13 @@ services:
     ports:
       - "9001:8000"
     environment:
-      - VLLM_URL=http://vllm-llm:8000
+      - VLLM_URL=http://vllm-ocr:8000
       - LLM_URL=http://vllm-llm:8000
     volumes:
       - ./client:/app/static:ro
     depends_on:
+      vllm-ocr:
+        condition: service_healthy
       vllm-llm:
         condition: service_healthy
     restart: unless-stopped

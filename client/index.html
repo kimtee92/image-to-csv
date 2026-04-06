@@ -1,33 +1,90 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Image → CSV</title>
+  <script>
+  (function(){var t=localStorage.getItem('theme');if(!t)t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t)})();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+  tailwind.config = {
+    darkMode: ['selector', '[data-theme="dark"]'],
+    theme: { extend: {
+      colors: {
+        aero: { 50:'#e8f4f8', 100:'#d0eaf4', 200:'#a0d6ea', 300:'#48cae4', 400:'#00b4d8', 500:'#0077b6', 600:'#005a8d', 700:'#023e58', 800:'#0c1a33', 900:'#080f1e' },
+        mint: { 400:'#72efdd', 500:'#06d6a0' },
+      }
+    }}
+  };
+  </script>
   <style>
+    /* ═══ Frutiger Aero Theme — Image to CSV ═══ */
+    :root, [data-theme="light"] {
+      --aero-bg: linear-gradient(135deg, #e0f2f8 0%, #eef6fd 40%, #e0f7f0 100%);
+      --aero-surface: rgba(255,255,255,0.55);
+      --aero-surface-solid: #ffffff;
+      --aero-glass-border: rgba(255,255,255,0.5);
+      --aero-glass-shadow: 0 8px 32px rgba(0,100,180,0.08);
+      --aero-primary: #0077b6;
+      --aero-primary-rgb: 0,119,182;
+      --aero-secondary: #00b4d8;
+      --aero-accent: #06d6a0;
+      --aero-text: #023e58;
+      --aero-text2: #3d6f8a;
+      --aero-text3: #7ba8c4;
+      --aero-input-bg: rgba(255,255,255,0.72);
+      --aero-input-border: rgba(0,119,182,0.18);
+      color-scheme: light;
+    }
+    [data-theme="dark"] {
+      --aero-bg: linear-gradient(135deg, #080f1e 0%, #0c1a33 50%, #091d2e 100%);
+      --aero-surface: rgba(12,26,51,0.55);
+      --aero-surface-solid: #0e1f3d;
+      --aero-glass-border: rgba(76,201,240,0.14);
+      --aero-glass-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      --aero-primary: #4cc9f0;
+      --aero-primary-rgb: 76,201,240;
+      --aero-secondary: #00b4d8;
+      --aero-accent: #72efdd;
+      --aero-text: #dceefa;
+      --aero-text2: #7ba8c9;
+      --aero-text3: #436d8a;
+      --aero-input-bg: rgba(12,26,51,0.72);
+      --aero-input-border: rgba(76,201,240,0.18);
+      color-scheme: dark;
+    }
+    body {
+      background: var(--aero-bg) !important;
+      background-attachment: fixed !important;
+      color: var(--aero-text);
+      transition: background 0.4s, color 0.3s;
+      min-height: 100vh;
+    }
+
     /* Drag-over highlight */
-    .drop-active { border-color: #6366f1 !important; background: #eef2ff !important; }
+    .drop-active { border-color: var(--aero-primary) !important; background: rgba(var(--aero-primary-rgb),0.06) !important; }
 
     /* Editable cell styling */
     td[contenteditable="true"]:focus {
-      outline: 2px solid #6366f1;
+      outline: 2px solid var(--aero-primary);
       outline-offset: -2px;
-      background: #f5f3ff;
+      background: rgba(var(--aero-primary-rgb),0.06);
     }
     th[contenteditable="true"]:focus {
-      outline: 2px solid #6366f1;
+      outline: 2px solid var(--aero-primary);
       outline-offset: -2px;
-      background: #ede9fe;
+      background: rgba(var(--aero-primary-rgb),0.08);
     }
 
     /* Row hover */
-    #data-table tbody tr:hover { background: #f9fafb; }
+    #data-table tbody tr:hover { background: rgba(var(--aero-primary-rgb),0.04); }
 
     /* Spinner */
     .spinner {
-      border: 4px solid #e5e7eb;
-      border-top: 4px solid #6366f1;
+      border: 4px solid rgba(var(--aero-primary-rgb),0.15);
+      border-top: 4px solid var(--aero-primary);
       border-radius: 50%;
       width: 40px;
       height: 40px;
@@ -44,7 +101,10 @@
       position: relative;
       overflow: hidden;
       cursor: grab;
-      background: #f1f5f9;
+      background: var(--aero-surface);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--aero-glass-border);
       min-height: 240px;
       height: 38vh;
       max-height: 45vh;
@@ -56,7 +116,6 @@
       user-select: none;
       -webkit-user-drag: none;
     }
-    /* Zoom controls */
     .zoom-controls {
       position: absolute;
       bottom: 8px;
@@ -67,42 +126,107 @@
     }
     .zoom-controls button {
       width: 28px; height: 28px;
-      border-radius: 6px;
-      border: 1px solid #d1d5db;
-      background: white;
-      color: #374151;
+      border-radius: 8px;
+      border: 1px solid var(--aero-glass-border);
+      background: var(--aero-surface);
+      backdrop-filter: blur(8px);
+      color: var(--aero-text);
       font-size: 14px;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: all 0.15s;
     }
-    .zoom-controls button:hover { background: #f3f4f6; }
-    /* Active field highlight pulse */
+    .zoom-controls button:hover { background: var(--aero-surface-solid); border-color: var(--aero-primary); }
     .field-active {
-      outline: 2px solid #6366f1 !important;
+      outline: 2px solid var(--aero-primary) !important;
       outline-offset: -1px;
-      background: #eef2ff !important;
+      background: rgba(var(--aero-primary-rgb),0.06) !important;
     }
+
+    /* Glass card */
+    .glass-card {
+      background: var(--aero-surface);
+      backdrop-filter: blur(16px) saturate(1.4);
+      -webkit-backdrop-filter: blur(16px) saturate(1.4);
+      border: 1px solid var(--aero-glass-border);
+      box-shadow: var(--aero-glass-shadow);
+    }
+
+    /* Theme toggle */
+    .theme-toggle {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      border: 1px solid var(--aero-glass-border);
+      background: var(--aero-surface);
+      backdrop-filter: blur(12px);
+      color: var(--aero-primary);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .theme-toggle:hover {
+      border-color: var(--aero-primary);
+      transform: scale(1.08);
+    }
+
+    /* ── Dark-theme Tailwind color overrides ─────────────────────────── */
+    [data-theme="dark"] .text-gray-300 { color: var(--aero-text3); }
+    [data-theme="dark"] .text-gray-400 { color: var(--aero-text3); }
+    [data-theme="dark"] .text-gray-500 { color: var(--aero-text3); }
+    [data-theme="dark"] .text-gray-600 { color: var(--aero-text2); }
+    [data-theme="dark"] .text-gray-700 { color: var(--aero-text); }
+    [data-theme="dark"] .text-gray-800 { color: var(--aero-text); }
+    [data-theme="dark"] .bg-white      { background-color: var(--aero-surface); }
+    [data-theme="dark"] .bg-gray-100   { background-color: var(--aero-surface); }
+    [data-theme="dark"] .bg-gray-50    { background-color: var(--aero-surface); }
+    [data-theme="dark"] .border-gray-50  { border-color: var(--aero-glass-border); }
+    [data-theme="dark"] .border-gray-100 { border-color: var(--aero-glass-border); }
+    [data-theme="dark"] .border-gray-200 { border-color: var(--aero-glass-border); }
+    [data-theme="dark"] .border-gray-300 { border-color: var(--aero-glass-border); }
+    [data-theme="dark"] .hover\:bg-gray-50:hover  { background-color: var(--aero-hover); }
+    [data-theme="dark"] .hover\:text-gray-600:hover { color: var(--aero-text2); }
+    [data-theme="dark"] .focus\:bg-gray-100:focus  { background-color: var(--aero-hover); }
+    [data-theme="dark"] .focus\:bg-indigo-50:focus { background-color: rgba(var(--aero-primary-rgb), 0.1); }
+    [data-theme="dark"] .border-indigo-300   { border-color: var(--aero-primary); }
+    [data-theme="dark"] .border-indigo-400   { border-color: var(--aero-primary); }
+    [data-theme="dark"] .text-indigo-600     { color: var(--aero-primary); }
+    [data-theme="dark"] .hover\:bg-indigo-50:hover { background-color: rgba(var(--aero-primary-rgb), 0.1); }
+    [data-theme="dark"] .focus\:ring-indigo-400 { --tw-ring-color: var(--aero-primary); }
+    [data-theme="dark"] .bg-green-100  { background-color: rgba(6,214,160,0.15); }
+    [data-theme="dark"] .text-green-700 { color: #72efdd; }
+    [data-theme="dark"] .text-red-400  { color: #f87171; }
+    [data-theme="dark"] .hover\:text-red-500:hover  { color: #f87171; }
+    [data-theme="dark"] .hover\:text-red-600:hover  { color: #ef4444; }
+    [data-theme="dark"] .hover\:text-orange-400:hover { color: #fb923c; }
+    [data-theme="dark"] .hover\:border-red-300:hover { border-color: rgba(248,113,113,0.4); }
+    [data-theme="dark"] .bg-red-100  { background-color: rgba(239,71,111,0.12); }
+    [data-theme="dark"] .text-red-700 { color: #f87171; }
   </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="min-h-screen">
 
   <!-- Header -->
-  <header class="bg-white shadow-sm border-b border-gray-200">
+  <header class="glass-card border-b" style="border-color: var(--aero-glass-border);">
     <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: linear-gradient(135deg, var(--aero-primary), var(--aero-secondary));">
           <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         </div>
         <div>
-          <h1 class="text-xl font-bold text-gray-900">Image → CSV</h1>
-          <p class="text-xs text-gray-500">Powered by Qwen3.5</p>
+          <h1 class="text-xl font-bold" style="color: var(--aero-text);">Image → CSV</h1>
+          <p class="text-xs" style="color: var(--aero-text3);">Powered by Qwen3.5</p>
         </div>
       </div>
-      <div id="status-badge" class="text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-500">Checking model…</div>
-    </div>
+      <div class="flex items-center gap-3">
+        <button class="theme-toggle" id="csv-theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+          <svg id="csv-icon-moon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg id="csv-icon-sun" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
+        <div id="status-badge" class="text-xs px-3 py-1 rounded-full" style="background:rgba(var(--aero-primary-rgb),0.08);color:var(--aero-text3);">Checking model…</div>
+      </div>
   </header>
 
   <main class="max-w-6xl mx-auto px-6 py-8">
@@ -110,28 +234,29 @@
     <!-- Upload Area -->
     <section id="upload-section">
       <div id="drop-zone"
-           class="border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center cursor-pointer
-                  hover:border-indigo-400 hover:bg-indigo-50/30 transition-all duration-200">
+           class="border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer
+                  glass-card transition-all duration-200"
+           style="border-color: var(--aero-input-border);">
         <input type="file" id="file-input" accept="image/*" class="hidden" />
         <div class="flex flex-col items-center gap-4">
-          <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center">
-            <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="w-16 h-16 rounded-full flex items-center justify-center" style="background:rgba(var(--aero-primary-rgb),0.1);">
+            <svg class="w-8 h-8" style="color:var(--aero-primary)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
           </div>
           <div>
-            <p class="text-lg font-semibold text-gray-700">Drop your timesheet image here</p>
-            <p class="text-sm text-gray-500 mt-1">or click to browse — PNG, JPG, WEBP up to 20 MB</p>
+            <p class="text-lg font-semibold" style="color:var(--aero-text);">Drop your timesheet image here</p>
+            <p class="text-sm mt-1" style="color:var(--aero-text3);">or click to browse — PNG, JPG, WEBP up to 20 MB</p>
           </div>
         </div>
       </div>
 
       <!-- Image preview after selection (before processing) -->
-      <div id="selected-preview" class="hidden mt-4 bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4">
-        <img id="selected-image-thumb" class="w-20 h-20 object-contain rounded-lg border border-gray-100" />
+      <div id="selected-preview" class="hidden mt-4 rounded-xl p-4 flex items-center gap-4 glass-card">
+        <img id="selected-image-thumb" class="w-20 h-20 object-contain rounded-lg" style="border:1px solid var(--aero-glass-border);" />
         <div class="flex-1">
-          <p id="selected-file-name" class="text-sm font-medium text-gray-800"></p>
-          <p class="text-xs text-gray-400">Image selected — fill in options below then click Extract</p>
+          <p id="selected-file-name" class="text-sm font-medium" style="color:var(--aero-text);"></p>
+          <p class="text-xs" style="color:var(--aero-text3);">Image selected — fill in options below then click Extract</p>
         </div>
         <button onclick="clearSelectedFile()" class="text-gray-400 hover:text-red-500 transition">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -142,18 +267,18 @@
       <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
         <!-- Prompt field -->
         <div>
-          <label for="prompt-input" class="block text-sm font-medium text-gray-700 mb-1">Additional Instructions (optional)</label>
+          <label for="prompt-input" class="block text-sm font-medium mb-1" style="color:var(--aero-text);">Additional Instructions (optional)</label>
           <textarea id="prompt-input" rows="3"
-                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800
-                           placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    class="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:border-transparent"
+                    style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);--tw-ring-color:var(--aero-primary);"
                     placeholder="e.g. &quot;Include the employee name and period from the header&quot; or &quot;Use 24-hour time format&quot;"></textarea>
         </div>
         <!-- CSV template upload -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">CSV Template (optional)</label>
+          <label class="block text-sm font-medium mb-1" style="color:var(--aero-text);">CSV Template (optional)</label>
           <div class="flex items-center gap-2">
-            <label class="flex-1 flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 rounded-lg
-                          cursor-pointer hover:bg-gray-50 transition text-sm text-gray-600">
+            <label class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg
+                          cursor-pointer transition text-sm" style="border:1px solid var(--aero-input-border);color:var(--aero-text2);background:var(--aero-input-bg);">
               <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
               </svg>
@@ -172,9 +297,10 @@
       <!-- Extract button -->
       <div class="mt-6 flex justify-center">
         <button id="extract-btn" onclick="startExtraction()" disabled
-                class="px-8 py-3 bg-indigo-600 text-white rounded-xl text-sm font-semibold
-                       hover:bg-indigo-700 transition flex items-center gap-2
-                       disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-indigo-600">
+                class="px-8 py-3 text-white rounded-xl text-sm font-semibold
+                       transition flex items-center gap-2
+                       disabled:opacity-40 disabled:cursor-not-allowed"
+                style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));box-shadow:0 4px 16px rgba(var(--aero-primary-rgb),0.25);">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
           Extract Table
         </button>
@@ -185,16 +311,16 @@
     <section id="loading-section" class="hidden">
       <div class="flex flex-col items-center gap-4 py-16">
         <div class="spinner"></div>
-        <p class="text-gray-600 font-medium">Extracting table from image…</p>
-        <p class="text-sm text-gray-400">This may take a few seconds</p>
+        <p class="font-medium" style="color:var(--aero-text2);">Extracting table from image…</p>
+        <p class="text-sm" style="color:var(--aero-text3);">This may take a few seconds</p>
       </div>
     </section>
 
     <!-- Error State -->
     <section id="error-section" class="hidden fade-in">
-      <div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
-        <p class="text-red-700 font-medium" id="error-message"></p>
-        <button onclick="resetApp()" class="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition text-sm">
+      <div class="rounded-xl p-6 text-center glass-card" style="border:1px solid rgba(239,71,111,0.25);">
+        <p class="font-medium" style="color:var(--aero-text);" id="error-message"></p>
+        <button onclick="resetApp()" class="mt-4 px-4 py-2 text-white rounded-lg transition text-sm" style="background:linear-gradient(135deg,#ef476f,#f87171);">
           Try Again
         </button>
       </div>
@@ -205,7 +331,7 @@
 
       <!-- Image Preview (sticky) -->
       <div class="mb-6 sticky top-4 z-10">
-        <div class="bg-white rounded-xl border border-gray-200 p-2">
+        <div class="rounded-xl p-2 glass-card">
           <div id="image-viewer" class="rounded-lg">
             <img id="image-preview" draggable="false" />
             <div class="zoom-controls">
@@ -214,23 +340,23 @@
               <button onclick="imgViewerReset()" title="Fit to view">⊡</button>
             </div>
           </div>
-          <p id="image-name" class="text-xs text-gray-400 mt-1 text-center truncate"></p>
+          <p id="image-name" class="text-xs mt-1 text-center truncate" style="color:var(--aero-text3);"></p>
         </div>
       </div>
 
       <!-- Table Info + Controls (not sticky) -->
       <div class="mb-6">
         <div class="flex items-center gap-2 mb-1">
-          <h2 class="text-lg font-bold text-gray-800">Extracted Table</h2>
+          <h2 class="text-lg font-bold" style="color:var(--aero-text);">Extracted Table</h2>
           <span id="llm-badge" class="hidden text-xs px-2 py-0.5 rounded-full font-medium"></span>
         </div>
-        <p class="text-sm text-gray-500 mb-3">Click any cell to edit. Use the buttons to add/remove rows and columns.</p>
+        <p class="text-sm mb-3" style="color:var(--aero-text3);">Click any cell to edit. Use the buttons to add/remove rows and columns.</p>
         <div class="flex flex-wrap gap-2">
-          <button onclick="downloadCSV()" class="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center gap-2">
+          <button onclick="downloadCSV()" class="px-6 py-2 text-white rounded-lg text-sm font-medium transition flex items-center gap-2" style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));box-shadow:0 4px 12px rgba(var(--aero-primary-rgb),0.2);">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
             Download CSV
           </button>
-          <button onclick="resetApp()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition">
+          <button onclick="resetApp()" class="px-4 py-2 rounded-lg text-sm font-medium transition" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);">
             New Image
           </button>
         </div>
@@ -297,9 +423,9 @@
           Remove Column
         </button>
       </div>
-      <div class="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-        <table id="data-table" class="w-full text-sm">
-          <thead id="table-head" class="bg-gray-50 border-b border-gray-200"></thead>
+      <div class="rounded-xl overflow-x-auto glass-card">
+        <table id="data-table" class="w-full text-sm" style="color:var(--aero-text);">
+          <thead id="table-head" style="background:rgba(var(--aero-primary-rgb),0.04);border-bottom:1px solid var(--aero-glass-border);"></thead>
           <tbody id="table-body"></tbody>
         </table>
       </div>
@@ -334,6 +460,28 @@
   </main>
 
   <script>
+    // ── Theme toggle ────────────────────────────────────────────────────
+    function toggleTheme() {
+      var cur = document.documentElement.getAttribute('data-theme') || 'light';
+      var next = cur === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      updateThemeIcon(next);
+    }
+    function updateThemeIcon(t) {
+      var moon = document.getElementById('csv-icon-moon');
+      var sun = document.getElementById('csv-icon-sun');
+      if (moon && sun) { moon.style.display = t === 'dark' ? 'none' : 'block'; sun.style.display = t === 'light' ? 'none' : 'block'; }
+    }
+    updateThemeIcon(document.documentElement.getAttribute('data-theme') || 'light');
+    window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function(e) {
+      if (!localStorage.getItem('theme')) {
+        var t = e.matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+        updateThemeIcon(t);
+      }
+    });
+
     // ── State ──────────────────────────────────────────────────────────────
     let currentHeaders = [];
     let currentRows = [];
@@ -477,15 +625,18 @@
         const d = await r.json();
         if (d.model_ready) {
           statusBadge.textContent = 'Model ready';
-          statusBadge.className = 'text-xs px-3 py-1 rounded-full bg-green-100 text-green-700';
+          statusBadge.className = 'text-xs px-3 py-1 rounded-full';
+          statusBadge.style.cssText = 'background:rgba(6,214,160,0.12);color:var(--aero-accent);';
         } else {
           statusBadge.textContent = 'Model loading…';
-          statusBadge.className = 'text-xs px-3 py-1 rounded-full bg-yellow-100 text-yellow-700';
+          statusBadge.className = 'text-xs px-3 py-1 rounded-full';
+          statusBadge.style.cssText = 'background:rgba(255,209,102,0.12);color:var(--aero-text2);';
           setTimeout(checkHealth, 10000);
         }
       } catch {
         statusBadge.textContent = 'Backend offline';
-        statusBadge.className = 'text-xs px-3 py-1 rounded-full bg-red-100 text-red-700';
+        statusBadge.className = 'text-xs px-3 py-1 rounded-full';
+        statusBadge.style.cssText = 'background:rgba(239,71,111,0.12);color:var(--aero-text2);';
         setTimeout(checkHealth, 5000);
       }
     }
@@ -571,10 +722,12 @@
         // LLM applied badge
         if (data.llm_applied) {
           llmBadge.textContent = '✓ LLM processed';
-          llmBadge.className = 'text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-700';
+          llmBadge.className = 'text-xs px-2 py-0.5 rounded-full font-medium';
+          llmBadge.style.cssText = 'background:rgba(6,214,160,0.12);color:var(--aero-accent);';
         } else {
           llmBadge.textContent = 'OCR only';
-          llmBadge.className = 'text-xs px-2 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500';
+          llmBadge.className = 'text-xs px-2 py-0.5 rounded-full font-medium';
+          llmBadge.style.cssText = 'background:var(--aero-surface);color:var(--aero-text3);';
         }
         llmBadge.classList.remove('hidden');
 

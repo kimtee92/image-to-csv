@@ -6,6 +6,7 @@ services:
     ipc: host
     runtime: nvidia
     environment:
+      - VLLM_USE_V1=0
       - NVIDIA_VISIBLE_DEVICES=0
       - HF_HOME=/workspace/hf_cache
       - HF_HUB_CACHE=/workspace/hf_cache
@@ -15,21 +16,18 @@ services:
     command: >
       --model Sehyo/Qwen3.5-122B-A10B-NVFP4
       --served-model-name qwen3.5-122b
-      --max-model-len 16384
-      --gpu-memory-utilization 0.90
+      --max-model-len 32768
+      --gpu-memory-utilization 0.92
       --kv-cache-dtype auto
       --dtype bfloat16
-      --host 0.0.0.0
-      --port 8000
       --trust-remote-code
       --enable-prefix-caching
-      --prefix-caching-hash-algo xxhash
       --enable-chunked-prefill
-      --max-num-seqs 8
+      --max-num-seqs 16
       --limit-mm-per-prompt '{"image": 1}'
-      --moe-backend auto
-      --optimization-level 3
-      --performance-mode throughput
+      --moe-backend flashinfer_cutlass
+      --mamba-cache-mode align
+      --mamba-block-size 8
       --disable-log-stats
     deploy:
       resources:
@@ -64,7 +62,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)"]
-      interval: 15s
+      interval: 60s
       timeout: 5s
       retries: 3
       start_period: 5s

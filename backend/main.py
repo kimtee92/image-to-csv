@@ -7,13 +7,15 @@ import logging
 import os
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 import httpx
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+import pypdfium2 as pdfium
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,12 +26,55 @@ VLLM_URL = os.getenv("VLLM_URL", "http://vllm-ocr:8000")
 LLM_URL = os.getenv("LLM_URL", "http://vllm-llm:8000")
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
-def _preprocess_image(raw_bytes: bytes, content_type: str) -> tuple[bytes, str]:
-    """Convert to RGB JPEG — let Qwen handle resolution natively."""
+def _preprocess_image(raw_bytes: bytes) -> tuple[bytes, str]:
+    """Convert an image upload to RGB JPEG for model input."""
     img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=95)
     return buf.getvalue(), "image/jpeg"
+
+
+def _is_pdf_upload(content_type: str | None, filename: str | None) -> bool:
+    ct = (content_type or "").lower()
+    name = (filename or "").lower()
+    return ct in {"application/pdf", "application/x-pdf"} or name.endswith(".pdf")
+
+
+def _is_image_upload(content_type: str | None, filename: str | None) -> bool:
+    ct = (content_type or "").lower()
+    if ct.startswith("image/"):
+        return True
+    ext = Path(filename or "").suffix.lower()
+    return ext in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
+
+
+def _preprocess_pdf(raw_bytes: bytes) -> tuple[bytes, str]:
+    """Render the first PDF page to RGB JPEG for model input."""
+    pdf = None
+    page = None
+    try:
+        pdf = pdfium.PdfDocument(io.BytesIO(raw_bytes))
+        if len(pdf) == 0:
+            raise ValueError("PDF has no pages")
+        page = pdf[0]
+        pil_image = page.render(scale=2).to_pil().convert("RGB")
+        buf = io.BytesIO()
+        pil_image.save(buf, format="JPEG", quality=95)
+        return buf.getvalue(), "image/jpeg"
+    finally:
+        if page is not None:
+            page.close()
+        if pdf is not None:
+            pdf.close()
+
+
+def _prepare_upload_for_model(
+    raw_bytes: bytes, content_type: str | None, filename: str | None
+) -> tuple[bytes, str]:
+    """Normalize image or PDF uploads into a model-ready image payload."""
+    if _is_pdf_upload(content_type, filename):
+        return _preprocess_pdf(raw_bytes)
+    return _preprocess_image(raw_bytes)
 
 
 # ── HTML table parser ──────────────────────────────────────────────────────
@@ -327,23 +372,37 @@ def _parse_csv_template(csv_text: str) -> dict:
 async def ocr_image(
     file: UploadFile = File(...),
     prompt: str = Form(""),
+    conversion_mode: str = Form("table"),
     csv_template: UploadFile | None = File(None),
 ):
-    """Upload an image and extract table data using GLM-OCR."""
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(400, "Only image files are supported")
+    """Upload an image/PDF and extract table or text using GLM-OCR."""
+    conversion_mode = (conversion_mode or "table").strip().lower()
+    if conversion_mode not in {"table", "text"}:
+        raise HTTPException(400, "Invalid conversion_mode. Use 'table' or 'text'.")
+
+    if not (_is_image_upload(file.content_type, file.filename) or _is_pdf_upload(file.content_type, file.filename)):
+        raise HTTPException(400, "Only image or PDF files are supported")
 
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(400, "File too large (max 20 MB)")
 
-    # Preprocess: upscale small images and normalise to PNG for lossless quality
-    contents, mime_type = _preprocess_image(contents, file.content_type or "image/png")
+    try:
+        contents, mime_type = _prepare_upload_for_model(contents, file.content_type, file.filename)
+    except UnidentifiedImageError:
+        raise HTTPException(400, "Unsupported or corrupted image file")
+    except Exception as e:
+        if _is_pdf_upload(file.content_type, file.filename):
+            raise HTTPException(400, f"Unsupported or corrupted PDF file: {e}")
+        raise HTTPException(400, f"Unable to process uploaded file: {e}")
+
     b64_image = base64.b64encode(contents).decode("utf-8")
 
-    # Parse CSV template if provided
+    has_user_prompt = bool(prompt.strip())
+
+    # Parse CSV template only for table mode
     template = {"header_fields": [], "table_headers": [], "footer_fields": []}
-    if csv_template and csv_template.filename:
+    if conversion_mode == "table" and csv_template and csv_template.filename:
         csv_bytes = await csv_template.read()
         try:
             csv_text = csv_bytes.decode("utf-8-sig")
@@ -351,55 +410,65 @@ async def ocr_image(
         except Exception:
             pass
 
-    # Determine what's needed before building the prompt
-    need_fields = bool(template["header_fields"] or template["footer_fields"])
-    has_user_prompt = bool(prompt.strip())
-    all_meta_fields = template.get("header_fields", []) + template.get("footer_fields", [])
-    field_labels = [row[0].rstrip(":").strip() for row in all_meta_fields if row[0]]
-
-    # ── Single comprehensive VLM call: OCR + extraction/transformation ──────
-    instr_parts = [
-        "You are an expert data extraction AI specializing in complex, handwritten forms and mixed tabular data.",
-        "Analyze the image carefully and return a single valid JSON object with the following keys IN THIS ORDER:",
-        "",
-        '"reasoning": 1-3 sentences: identify document type, column data types, and any blurry/ambiguous regions.',
-    ]
-
-    # "fields" key — only include in schema when actually needed
-    if need_fields:
-        fields_schema = ", ".join(f'"{l}"' for l in field_labels)
-        instr_parts.append(
-            f'"fields": Object with exactly these keys: {{{fields_schema}}} — extract their values from the document metadata, header, or footer.'
-        )
-
-    instr_parts += [
-        '"full_text": Full transcription of all text, preserving the layout.',
-    ]
-
-    if template["table_headers"]:
-        instr_parts.append(
-            f'"headers": Use exactly these column headers: {json.dumps(template["table_headers"])}'
-        )
+    if conversion_mode == "text":
+        instr_parts = [
+            "You are an expert OCR transcription AI.",
+            "Analyze the document carefully and return a single valid JSON object with these keys IN THIS ORDER:",
+            '"reasoning": 1-2 sentences describing document type and any low-confidence text zones.',
+            '"text": Full transcription of all visible text with clean line breaks.',
+            "Output ONLY valid JSON. No markdown fences, no explanation.",
+        ]
+        if has_user_prompt:
+            instr_parts += ["", "Apply this optional instruction to the transcribed text:", prompt.strip()]
     else:
-        instr_parts.append(
-            '"headers": Array of column header strings. Combine nested/multi-tier headers into one string per column (e.g., "Category - Subcategory").'
-        )
+        # Determine what's needed before building the prompt
+        need_fields = bool(template["header_fields"] or template["footer_fields"])
+        all_meta_fields = template.get("header_fields", []) + template.get("footer_fields", [])
+        field_labels = [row[0].rstrip(":").strip() for row in all_meta_fields if row[0]]
 
-    instr_parts += [
-        '"rows": Array of row arrays — each row has exactly the same number of items as headers. Do NOT include the header row.',
-        "",
-        "RULES:",
-        "1. METADATA PROTECTION: Transcribe non-grid form fields (Names, Addresses, IDs) exactly as written.",
-        "2. DATA-TYPE INFERENCE: In each grid column, correct OCR artifacts based on expected type (O→0, l→1 for number/date/time columns). Leave text/name columns intact.",
-        "3. ANOMALIES: Transcribe deliberate text in numeric cells (N/A, Void, Deceased) exactly as written.",
-        "4. EMPTY CELLS: Blank, crossed-out, or empty cells → empty string \"\".",
-        "5. ALIGNMENT: Every row array must have exactly the same length as headers.",
-    ]
+        # Single comprehensive VLM call: OCR + extraction/transformation
+        instr_parts = [
+            "You are an expert data extraction AI specializing in complex, handwritten forms and mixed tabular data.",
+            "Analyze the image carefully and return a single valid JSON object with the following keys IN THIS ORDER:",
+            "",
+            '"reasoning": 1-3 sentences: identify document type, column data types, and any blurry/ambiguous regions.',
+        ]
 
-    if has_user_prompt:
-        instr_parts += ["", "Transformation instructions for the rows:", prompt.strip()]
+        # Include fields schema only when template metadata fields exist
+        if need_fields:
+            fields_schema = ", ".join(f'"{l}"' for l in field_labels)
+            instr_parts.append(
+                f'"fields": Object with exactly these keys: {{{fields_schema}}} - extract their values from the document metadata, header, or footer.'
+            )
 
-    instr_parts += ["", "Output ONLY valid JSON. No markdown fences, no explanation."]
+        instr_parts += [
+            '"full_text": Full transcription of all text, preserving the layout.',
+        ]
+
+        if template["table_headers"]:
+            instr_parts.append(
+                f'"headers": Use exactly these column headers: {json.dumps(template["table_headers"])}'
+            )
+        else:
+            instr_parts.append(
+                '"headers": Array of column header strings. Combine nested/multi-tier headers into one string per column (e.g., "Category - Subcategory").'
+            )
+
+        instr_parts += [
+            '"rows": Array of row arrays - each row has exactly the same number of items as headers. Do NOT include the header row.',
+            "",
+            "RULES:",
+            "1. METADATA PROTECTION: Transcribe non-grid form fields (Names, Addresses, IDs) exactly as written.",
+            "2. DATA-TYPE INFERENCE: In each grid column, correct OCR artifacts based on expected type (O->0, l->1 for number/date/time columns). Leave text/name columns intact.",
+            "3. ANOMALIES: Transcribe deliberate text in numeric cells (N/A, Void, Deceased) exactly as written.",
+            "4. EMPTY CELLS: Blank, crossed-out, or empty cells -> empty string \"\".",
+            "5. ALIGNMENT: Every row array must have exactly the same length as headers.",
+        ]
+
+        if has_user_prompt:
+            instr_parts += ["", "Transformation instructions for the rows:", prompt.strip()]
+
+        instr_parts += ["", "Output ONLY valid JSON. No markdown fences, no explanation."]
 
     payload = {
         "model": "qwen3.5-122b",
@@ -434,8 +503,31 @@ async def ocr_image(
     raw_content = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
     logger.info("VLM response (first 2000): %s", raw_content[:2000])
 
+    if conversion_mode == "text":
+        extracted_text = raw_content
+        try:
+            json_match = re.search(r"\{[\s\S]*\}", raw_content)
+            if json_match:
+                result_json = json.loads(json_match.group(0))
+                extracted_text = str(
+                    result_json.get("text")
+                    or result_json.get("full_text")
+                    or raw_content
+                ).strip()
+        except Exception as e:
+            logger.warning("Text JSON parse failed (%s): %s", type(e).__name__, e)
+
+        return {
+            "mode": "text",
+            "text": extracted_text,
+            "raw": extracted_text,
+            "llm_applied": has_user_prompt,
+            "llm_raw": raw_content,
+        }
+
     # Initialise table_data with safe defaults
     table_data: dict = {
+        "mode": "table",
         "headers": [], "rows": [], "text_above": [], "text_below": [],
         "raw": raw_content, "llm_applied": False, "llm_raw": raw_content,
     }

@@ -3,3 +3,4 @@ uvicorn[standard]==0.34.*
 httpx==0.28.*
 python-multipart==0.0.*
 Pillow==11.*
+pypdfium2==4.*

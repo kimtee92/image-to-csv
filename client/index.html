@@ -238,7 +238,7 @@
            class="border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer
                   glass-card transition-all duration-200"
            style="border-color: var(--aero-input-border);">
-        <input type="file" id="file-input" accept="image/*" class="hidden" />
+        <input type="file" id="file-input" accept="image/*,application/pdf,.pdf" class="hidden" />
         <div class="flex flex-col items-center gap-4">
           <div class="w-16 h-16 rounded-full flex items-center justify-center" style="background:rgba(var(--aero-primary-rgb),0.1);">
             <svg class="w-8 h-8" style="color:var(--aero-primary)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -246,8 +246,8 @@
             </svg>
           </div>
           <div>
-            <p class="text-lg font-semibold" style="color:var(--aero-text);">Drop your timesheet image here</p>
-            <p class="text-sm mt-1" style="color:var(--aero-text3);">or click to browse — PNG, JPG, WEBP up to 20 MB</p>
+            <p class="text-lg font-semibold" style="color:var(--aero-text);">Drop your file here</p>
+            <p class="text-sm mt-1" style="color:var(--aero-text3);">or click to browse - PNG, JPG, WEBP, PDF up to 20 MB</p>
           </div>
         </div>
       </div>
@@ -257,11 +257,27 @@
         <img id="selected-image-thumb" class="w-20 h-20 object-contain rounded-lg" style="border:1px solid var(--aero-glass-border);" />
         <div class="flex-1">
           <p id="selected-file-name" class="text-sm font-medium" style="color:var(--aero-text);"></p>
-          <p class="text-xs" style="color:var(--aero-text3);">Image selected — fill in options below then click Extract</p>
+          <p class="text-xs" style="color:var(--aero-text3);">File selected - fill in options below then click Extract</p>
         </div>
         <button onclick="clearSelectedFile()" class="text-gray-400 hover:text-red-500 transition">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
+      </div>
+
+      <!-- Conversion mode -->
+      <div class="mt-6">
+        <label class="block text-sm font-medium mb-2" style="color:var(--aero-text);">Conversion Mode</label>
+        <div class="inline-flex rounded-xl p-1 glass-card" style="border:1px solid var(--aero-input-border);">
+          <button id="mode-table-btn" type="button" onclick="setConversionMode('table')"
+                  class="px-4 py-2 rounded-lg text-sm font-semibold transition">
+            Table conversion
+          </button>
+          <button id="mode-text-btn" type="button" onclick="setConversionMode('text')"
+                  class="px-4 py-2 rounded-lg text-sm font-semibold transition">
+            Text conversion
+          </button>
+        </div>
+        <p class="text-xs mt-2" style="color:var(--aero-text3);">Table mode keeps the current editable table workflow. Text mode returns one editable text block and exports as TXT.</p>
       </div>
 
       <!-- Additional options -->
@@ -275,10 +291,10 @@
                     placeholder="e.g. &quot;Include the employee name and period from the header&quot; or &quot;Use 24-hour time format&quot;"></textarea>
         </div>
         <!-- CSV template upload -->
-        <div>
+        <div id="csv-template-group">
           <label class="block text-sm font-medium mb-1" style="color:var(--aero-text);">CSV Template (optional)</label>
           <div class="flex items-center gap-2">
-            <label class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg
+            <label id="csv-template-label" class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg
                           cursor-pointer transition text-sm" style="border:1px solid var(--aero-input-border);color:var(--aero-text2);background:var(--aero-input-bg);">
               <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
@@ -303,7 +319,7 @@
                        disabled:opacity-40 disabled:cursor-not-allowed"
                 style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));box-shadow:0 4px 16px rgba(var(--aero-primary-rgb),0.25);">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-          Extract Table
+          <span id="extract-btn-label">Extract Table</span>
         </button>
       </div>
     </section>
@@ -312,8 +328,8 @@
     <section id="loading-section" class="hidden">
       <div class="flex flex-col items-center gap-4 py-16">
         <div class="spinner"></div>
-        <p class="font-medium" style="color:var(--aero-text2);">Extracting table from image…</p>
-        <p class="text-sm" style="color:var(--aero-text3);">This may take a few seconds</p>
+        <p id="loading-title" class="font-medium" style="color:var(--aero-text2);">Extracting table from file...</p>
+        <p id="loading-subtitle" class="text-sm" style="color:var(--aero-text3);">This may take a few seconds</p>
       </div>
     </section>
 
@@ -331,7 +347,7 @@
     <section id="results-section" class="hidden fade-in">
 
       <!-- Image Preview (sticky) -->
-      <div class="mb-6 sticky top-4 z-10">
+      <div id="preview-panel" class="mb-6 sticky top-4 z-10">
         <div class="rounded-xl p-2 glass-card">
           <div id="image-viewer" class="rounded-lg">
             <img id="image-preview" draggable="false" />
@@ -345,6 +361,7 @@
         </div>
       </div>
 
+      <div id="table-results">
       <!-- Table Info + Controls (not sticky) -->
       <div class="mb-6">
         <div class="flex items-center gap-2 mb-1">
@@ -449,6 +466,26 @@
         <summary class="cursor-pointer text-sm text-gray-400 hover:text-gray-600">Show LLM raw output</summary>
         <pre id="llm-raw-output" class="mt-2 bg-gray-100 rounded-lg p-4 text-xs text-gray-600 overflow-x-auto whitespace-pre-wrap"></pre>
       </details>
+      </div>
+
+      <div id="text-results" class="hidden">
+        <div class="mb-3 flex items-center gap-2">
+          <h2 class="text-lg font-bold" style="color:var(--aero-text);">Extracted Text</h2>
+        </div>
+        <p class="text-sm mb-3" style="color:var(--aero-text3);">Edit the extracted text below, then export it as a TXT file.</p>
+        <textarea id="text-output-editor" rows="18"
+                  class="w-full rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:border-transparent"
+                  style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);--tw-ring-color:var(--aero-primary);"></textarea>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button onclick="downloadText()" class="px-6 py-2 text-white rounded-lg text-sm font-medium transition flex items-center gap-2" style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));box-shadow:0 4px 12px rgba(var(--aero-primary-rgb),0.2);">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Download TXT
+          </button>
+          <button onclick="resetApp()" class="px-4 py-2 rounded-lg text-sm font-medium transition" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);">
+            New File
+          </button>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -481,6 +518,7 @@
     let headerFields = [];  // [{label, value}, ...]
     let footerFields = [];
     let selectedFile = null;
+    let conversionMode = 'table';
     let ocrRawText = '';     // raw OCR text for field search
 
     // ── Image viewer state ────────────────────────────────────────────────
@@ -493,8 +531,13 @@
     const csvInput         = document.getElementById('csv-input');
     const csvFileLabel     = document.getElementById('csv-file-label');
     const csvClearBtn      = document.getElementById('csv-clear-btn');
+    const csvTemplateGroup = document.getElementById('csv-template-group');
+    const csvTemplateLabel = document.getElementById('csv-template-label');
     const promptInput      = document.getElementById('prompt-input');
     const extractBtn       = document.getElementById('extract-btn');
+    const extractBtnLabel  = document.getElementById('extract-btn-label');
+    const modeTableBtn     = document.getElementById('mode-table-btn');
+    const modeTextBtn      = document.getElementById('mode-text-btn');
     const selectedPreview  = document.getElementById('selected-preview');
     const selectedThumb    = document.getElementById('selected-image-thumb');
     const selectedFileName = document.getElementById('selected-file-name');
@@ -511,7 +554,13 @@
     const llmBadge         = document.getElementById('llm-badge');
     const llmDebugSection  = document.getElementById('llm-debug-section');
     const llmRawOutput     = document.getElementById('llm-raw-output');
+    const loadingTitle     = document.getElementById('loading-title');
+    const loadingSubtitle  = document.getElementById('loading-subtitle');
     const statusBadge      = document.getElementById('status-badge');
+    const previewPanel     = document.getElementById('preview-panel');
+    const tableResults     = document.getElementById('table-results');
+    const textResults      = document.getElementById('text-results');
+    const textOutputEditor = document.getElementById('text-output-editor');
     const textAboveSection = document.getElementById('text-above-section');
     const textAboveFields  = document.getElementById('text-above-fields');
     const textBelowSection = document.getElementById('text-below-section');
@@ -596,6 +645,10 @@
 
     // ── CSV file label ────────────────────────────────────────────────────
     csvInput.addEventListener('change', () => {
+      if (conversionMode === 'text') {
+        clearCsvTemplate();
+        return;
+      }
       if (csvInput.files[0]) {
         csvFileLabel.textContent = csvInput.files[0].name;
         csvClearBtn.classList.remove('hidden');
@@ -610,6 +663,44 @@
       csvFileLabel.textContent = 'Choose CSV file for column baseline…';
       csvClearBtn.classList.add('hidden');
     }
+
+    function isPdfFile(file) {
+      if (!file) return false;
+      return file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    }
+
+    function isSupportedUpload(file) {
+      if (!file) return false;
+      return file.type.startsWith('image/') || isPdfFile(file);
+    }
+
+    function setConversionMode(mode) {
+      conversionMode = mode === 'text' ? 'text' : 'table';
+      updateConversionModeUI();
+    }
+
+    function updateConversionModeUI() {
+      const tableActive = conversionMode === 'table';
+
+      modeTableBtn.style.background = tableActive ? 'linear-gradient(135deg,var(--aero-primary),var(--aero-secondary))' : 'transparent';
+      modeTableBtn.style.color = tableActive ? '#fff' : 'var(--aero-text2)';
+      modeTextBtn.style.background = !tableActive ? 'linear-gradient(135deg,var(--aero-primary),var(--aero-secondary))' : 'transparent';
+      modeTextBtn.style.color = !tableActive ? '#fff' : 'var(--aero-text2)';
+
+      if (tableActive) {
+        csvTemplateGroup.classList.remove('opacity-50', 'pointer-events-none');
+        csvInput.disabled = false;
+        csvTemplateLabel.style.cursor = 'pointer';
+        extractBtnLabel.textContent = 'Extract Table';
+      } else {
+        clearCsvTemplate();
+        csvTemplateGroup.classList.add('opacity-50', 'pointer-events-none');
+        csvInput.disabled = true;
+        csvTemplateLabel.style.cursor = 'not-allowed';
+        extractBtnLabel.textContent = 'Extract Text';
+      }
+    }
+    updateConversionModeUI();
 
     // ── Health check (single check on load only) ──────────────────────────
     async function checkHealth() {
@@ -642,7 +733,7 @@
       e.preventDefault();
       dropZone.classList.remove('drop-active');
       const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith('image/')) selectFile(file);
+      if (isSupportedUpload(file)) selectFile(file);
     });
 
     // Also support paste
@@ -658,11 +749,22 @@
     });
 
     function selectFile(file) {
+      if (!isSupportedUpload(file)) {
+        errorMessage.textContent = 'Only image or PDF files are supported.';
+        showSection('error');
+        return;
+      }
+
       selectedFile = file;
-      // Show thumbnail preview
-      const reader = new FileReader();
-      reader.onload = (e) => { selectedThumb.src = e.target.result; };
-      reader.readAsDataURL(file);
+
+      if (isPdfFile(file)) {
+        selectedThumb.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect x="12" y="8" width="72" height="80" rx="10" fill="%23f3f6ff" stroke="%233f63ff" stroke-width="4"/><text x="48" y="57" text-anchor="middle" font-size="26" font-family="Arial" fill="%233f63ff">PDF</text></svg>';
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => { selectedThumb.src = e.target.result; };
+        reader.readAsDataURL(file);
+      }
+
       selectedFileName.textContent = file.name;
       selectedPreview.classList.remove('hidden');
       extractBtn.disabled = false;
@@ -671,6 +773,7 @@
     function clearSelectedFile() {
       selectedFile = null;
       fileInput.value = '';
+      selectedThumb.removeAttribute('src');
       selectedPreview.classList.add('hidden');
       extractBtn.disabled = true;
     }
@@ -678,22 +781,32 @@
     async function startExtraction() {
       if (!selectedFile) return;
       const file = selectedFile;
+      const isPdfUpload = isPdfFile(file);
+
+      loadingTitle.textContent = conversionMode === 'text' ? 'Extracting text from file...' : 'Extracting table from file...';
+      loadingSubtitle.textContent = isPdfUpload ? 'Processing PDF and extracting content...' : 'This may take a few seconds';
 
       showSection('loading');
 
-      // Preview image in results area
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        imagePreview.src = e.target.result;
+      // Preview image in results area (image uploads only)
+      if (!isPdfUpload && conversionMode === 'table') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          imagePreview.src = e.target.result;
+          imageName.textContent = file.name;
+        };
+        reader.readAsDataURL(file);
+      } else {
+        imagePreview.removeAttribute('src');
         imageName.textContent = file.name;
-      };
-      reader.readAsDataURL(file);
+      }
 
       // Upload with prompt + csv template
       const form = new FormData();
       form.append('file', file);
       form.append('prompt', promptInput.value || '');
-      if (csvInput.files[0]) {
+      form.append('conversion_mode', conversionMode);
+      if (conversionMode === 'table' && csvInput.files[0]) {
         form.append('csv_template', csvInput.files[0]);
       }
 
@@ -704,6 +817,20 @@
           throw new Error(err.detail || 'OCR failed');
         }
         const data = await resp.json();
+
+        if (conversionMode === 'text' || data.mode === 'text') {
+          textOutputEditor.value = data.text || data.raw || '';
+          previewPanel.classList.add('hidden');
+          tableResults.classList.add('hidden');
+          textResults.classList.remove('hidden');
+          showSection('results');
+          clearCsvTemplate();
+          return;
+        }
+
+        previewPanel.classList.toggle('hidden', isPdfUpload);
+        tableResults.classList.remove('hidden');
+        textResults.classList.add('hidden');
 
         currentHeaders = data.headers || [];
         currentRows = data.rows || [];
@@ -751,7 +878,9 @@
         renderNonTableFields();
         showSection('results');
         // Reset image viewer after section is visible (load event fires too early while hidden)
-        requestAnimationFrame(() => imgViewerReset());
+        if (!isPdfUpload) {
+          requestAnimationFrame(() => imgViewerReset());
+        }
         clearCsvTemplate();
       } catch (err) {
         errorMessage.textContent = err.message;
@@ -1085,6 +1214,19 @@
       }
     }
 
+    // ── TXT Download (text mode) ─────────────────────────────────────────
+    function downloadText() {
+      document.activeElement?.blur();
+      const textContent = textOutputEditor.value || '';
+      const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (imageName.textContent?.replace(/\.[^.]+$/, '') || 'extracted-text') + '.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
     // ── CSV Download ──────────────────────────────────────────────────────
     function downloadCSV() {
       // Sync any in-progress edits
@@ -1140,8 +1282,14 @@
       currentRows = [];
       headerFields = [];
       footerFields = [];
+      textOutputEditor.value = '';
+      imagePreview.removeAttribute('src');
+      imageName.textContent = '';
       selectedPreview.classList.add('hidden');
       extractBtn.disabled = true;
+      previewPanel.classList.remove('hidden');
+      tableResults.classList.remove('hidden');
+      textResults.classList.add('hidden');
       // Keep CSV template and prompt — user typically reuses same settings across images
       showSection('upload');
     }
